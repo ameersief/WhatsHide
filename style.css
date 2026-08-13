@@ -1,0 +1,88 @@
+:root {
+    --sidebar-msgs-val: 8px;
+    --sidebar-names-val: 8px;
+    --sidebar-imgs-val: 12px;
+    --chat-msgs-val: 8px;
+    --chat-names-val: 8px;
+}
+
+/* التغبيش الاحترافي (السينمائي) */
+body.sidebar-msgs #pane-side div[data-testid="cell-frame-secondary"] > div:first-child {
+    filter: blur(var(--sidebar-msgs-val)) !important;
+    transition: filter 0.1s ease-in-out !important;
+}
+body.sidebar-names #pane-side div[data-testid="cell-frame-title"] {
+    filter: blur(var(--sidebar-names-val)) !important;
+    transition: filter 0.1s ease-in-out !important;
+}
+body.sidebar-imgs #pane-side img {
+    filter: blur(var(--sidebar-imgs-val)) !important;
+    transition: filter 0.1s ease-in-out !important;
+}
+body.chat-msgs #main div[data-testid="msg-container"] {
+    filter: blur(var(--chat-msgs-val)) !important;
+    transition: filter 0.1s ease-in-out !important;
+}
+body.chat-names #main header > div:nth-child(2) span,
+body.chat-names #main header span[dir="auto"] {
+    filter: blur(var(--chat-names-val)) !important;
+    transition: filter 0.1s ease-in-out !important;
+}
+
+/* تأثير Hover مع تأخير */
+body.sidebar-msgs #pane-side div[data-testid="cell-frame-secondary"] > div:first-child:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+body.sidebar-names #pane-side div[data-testid="cell-frame-title"]:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+body.sidebar-imgs #pane-side img:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+body.chat-msgs #main div[data-testid="msg-container"]:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+body.chat-names #main header > div:nth-child(2) span:hover,
+body.chat-names #main header span[dir="auto"]:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+
+/* Zen Mode (إخفاء القائمة) */
+body.zen-mode #side { display: none !important; }
+body.zen-mode #main { width: 100% !important; flex: 1 1 auto !important; }
+
+/* الحجب الذكي للكلمات - تأثير بلور احترافي بدون وميض */
+omni-redact {
+    display: inline;
+    filter: blur(6px) !important;
+    border-radius: 3px;
+    user-select: none;
+    cursor: default;
+    /* لا transition هنا — نريد أن يظهر البلور فوراً بدون animation عند الإضافة */
+    will-change: filter;
+}
+omni-redact:hover {
+    filter: blur(0px) !important;
+    transition: filter 0.35s ease !important;
+    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+}
+
+/* عند تغيير الـ pattern: إخفاء مؤقت لمنع الـ flash أثناء إعادة البناء */
+body.omni-restoring omni-redact {
+    visibility: hidden !important;
+}
+
+/* حماية لقطات الشاشة الاحترافية (عند فقدان الفوكس أو محاولة التصوير) */
+body.screenshot-blur-active #app,
+body.screenshot-blur-active #side,
+body.screenshot-blur-active #main {
+    filter: blur(50px) grayscale(100%) !important;
+    opacity: 0.05 !important;
+    transition: none !important;
+    pointer-events: none !important;
+}

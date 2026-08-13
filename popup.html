@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root { --bg-main: #0c1317; --bg-card: #111b21; --bg-input: #202c33; --accent: #00a884; --text-main: #e9edef; --text-sub: #8696a0; --danger: #ea0038; --gold: #ffd700; }
+        body { width: 380px; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-main); color: var(--text-main); margin: 0; user-select: none; overflow-x: hidden; }
+        body[dir="rtl"] { direction: rtl; } body[dir="ltr"] { direction: ltr; }
+        
+        .brand-header { background: linear-gradient(135deg, #1f2c34 0%, #111b21 100%); padding: 18px; text-align: center; font-weight: 700; font-size: 18px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .brand-header .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 10px var(--accent); }
+        .brand-header.pro-active .logo-dot { background: var(--gold); box-shadow: 0 0 15px var(--gold); }
+        .brand-header.pro-active span { color: var(--gold); }
+
+        .wrapper { padding: 16px; max-height: 520px; overflow-y: auto; opacity: 0; transition: opacity 0.3s; }
+        .wrapper.loaded { opacity: 1; }
+        .wrapper::-webkit-scrollbar { width: 4px; } .wrapper::-webkit-scrollbar-thumb { background: var(--bg-input); border-radius: 4px; }
+        
+        .overlay-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(12, 19, 23, 0.98); backdrop-filter: blur(15px); z-index: 9999; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; box-sizing: border-box; }
+        .pin-box { width: 45px; height: 55px; background: var(--bg-input); border: 2px solid rgba(0, 168, 132, 0.2); border-radius: 8px; font-size: 24px; text-align: center; color: white; outline: none; margin: 0 5px; }
+        .pin-box:focus { border-color: var(--accent); }
+        .lockout-timer { color: var(--danger); font-size: 20px; font-weight: bold; margin-top: 15px; }
+
+        .section-title { font-size: 11px; color: var(--text-sub); margin: 15px 0 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
+        .section-title::after { content: ''; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.05); }
+        
+        .card { background: var(--bg-card); padding: 14px; border-radius: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.03); position: relative; overflow: hidden; }
+        .card.pro-locked {
+            opacity: 0.85;
+        }
+        .card.pro-locked input, 
+        .card.pro-locked select, 
+        .card.pro-locked button {
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+            opacity: 0.6;
+        }
+        .pro-badge {
+            background: linear-gradient(45deg, #d4af37, #ffd700);
+            color: #000 !important;
+            font-size: 9px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            display: inline-block;
+            vertical-align: middle;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+        .tooltip-container {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+            margin-left: 6px;
+        }
+        .info-icon {
+            color: var(--text-sub);
+            font-size: 12.5px;
+            display: inline-block;
+            vertical-align: middle;
+            transition: color 0.2s;
+        }
+        .tooltip-container:hover .info-icon {
+            color: var(--gold);
+        }
+        .tooltip-text {
+            visibility: hidden;
+            width: 210px;
+            background-color: #161f23;
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 99;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -105px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11.5px;
+            font-weight: normal;
+            line-height: 1.4;
+            border: 1px solid rgba(255, 215, 0, 0.25);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+        .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #161f23 transparent transparent transparent;
+        }
+        .tooltip-container:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        .flex-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .card-label { font-size: 13.5px; font-weight: 600; }
+        
+        .switch { position: relative; display: inline-block; width: 38px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3b4a54; transition: .3s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: var(--text-sub); transition: .3s; border-radius: 50%; }
+        body[dir="rtl"] .slider:before { left: auto; right: 3px; }
+        input:checked + .slider { background-color: var(--accent); }
+        input:checked + .slider:before { transform: translateX(18px); background-color: #fff; }
+        body[dir="rtl"] input:checked + .slider:before { transform: translateX(-18px); background-color: #fff; }
+
+        .range-box { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+        input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; height: 5px; background: var(--bg-input); border-radius: 6px; appearance: none; }
+        .val-badge { font-size: 11px; color: var(--text-sub); background: var(--bg-input); padding: 3px 6px; border-radius: 4px; min-width: 28px; text-align: center; }
+
+        .input-group { display: flex; gap: 6px; margin-bottom: 10px; width: 100%; }
+        .input-group input { flex: 1; background: var(--bg-input); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 8px 12px; color: #fff; font-size: 12.5px; outline: none; }
+        .btn { background: var(--accent); border: none; color: white; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; white-space: nowrap; }
+        .btn-gold { background: linear-gradient(45deg, #d4af37, #ffd700); color: #000; }
+        
+        #toast { position: fixed; bottom: -50px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 12px; padding: 8px 16px; border-radius: 20px; z-index: 10000; transition: bottom 0.3s; font-weight: bold;}
+        #toast.show { bottom: 16px; }
+        .shortcut-input { text-align: center; color: var(--accent); font-weight: bold; cursor: pointer; }
+        
+        .lang-switcher { position: absolute; top: 18px; right: 15px; background: var(--bg-input); border: 1px solid rgba(255,255,255,0.1); color: var(--text-main); font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer; z-index: 10; }
+        body[dir="rtl"] .lang-switcher { right: auto; left: 15px; }
+
+        .word-tag {
+            background: var(--bg-input);
+            border: 1px solid rgba(255,255,255,0.05);
+            color: var(--text-main);
+            padding: 4px 10px;
+            border-radius: 16px;
+            font-size: 11.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+        .word-tag .remove-btn {
+            cursor: pointer;
+            color: var(--text-sub);
+            font-weight: bold;
+            font-size: 13px;
+            transition: color 0.2s;
+        }
+        .word-tag .remove-btn:hover {
+            color: var(--danger);
+        }
+    </style>
+</head>
+<body>
+    <div id="pin-screen" class="overlay-screen">
+        <div id="t-lbl-enter-pin" style="color: var(--accent); font-size: 18px; font-weight: bold; margin-bottom: 15px;">🔒 Enter PIN</div>
+        <div>
+            <input type="password" class="pin-box" maxlength="1"><input type="password" class="pin-box" maxlength="1">
+            <input type="password" class="pin-box" maxlength="1"><input type="password" class="pin-box" maxlength="1">
+        </div>
+        <div id="pin-error" style="color: var(--danger); font-size: 12px; margin-top: 10px; height: 15px;"></div>
+        <div id="lockout-timer" class="lockout-timer"></div>
+        <button id="show-recovery-btn" class="btn" style="background: transparent; border: 1px solid var(--text-sub); margin-top: 20px;">Forgot PIN?</button>
+    </div>
+
+    <div id="recovery-screen" class="overlay-screen">
+        <div id="t-lbl-rec-title" style="color: var(--gold); font-size: 18px; font-weight: bold; margin-bottom: 15px;">🛡️ PIN Recovery</div>
+        <p id="t-lbl-rec-desc" style="font-size: 12px; color: var(--text-sub); margin-bottom: 20px;">Enter the recovery code generated during setup.</p>
+        <input type="text" id="recovery-input" placeholder="e.g. A8X2-9M4P" style="background: var(--bg-input); border: 1px solid var(--accent); border-radius: 6px; padding: 10px; color: #fff; text-align: center; font-weight: bold; letter-spacing: 2px; width: 80%; margin-bottom: 15px;">
+        <button id="verify-recovery-btn" class="btn btn-gold" style="width: 80%;">Reset Security</button>
+        <button id="cancel-recovery-btn" class="btn" style="background: transparent; margin-top: 10px;">Cancel</button>
+    </div>
+
+    <button class="lang-switcher" id="lang-btn">العربية</button>
+    <div class="brand-header" id="main-header"><div class="logo-dot"></div><span>WhatsHide</span></div>
+
+    <!-- Quick Lock Button -->
+    <div id="quick-lock-bar" style="padding: 10px 16px; background: linear-gradient(135deg, #1a0a0a, #0c1317); border-bottom: 1px solid rgba(234,0,56,0.2);">
+        <button id="quick-lock-btn" style="
+            width: 100%; padding: 11px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #ea0038, #c20030);
+            color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            box-shadow: 0 4px 20px rgba(234,0,56,0.35);
+            transition: all 0.2s; letter-spacing: 0.3px;
+        ">🔴 <span id="quick-lock-label">PANIC — Hide Everything Now</span></button>
+    </div>
+
+    <div class="wrapper" id="main-wrapper">
+        <!-- Trial Status Banner -->
+        <div id="trial-banner" style="display: none; background: rgba(255, 215, 0, 0.1); border: 1px solid var(--gold); border-radius: 8px; padding: 10px; margin-bottom: 12px; text-align: center; font-size: 12px; position: relative;">
+            <div style="font-weight: bold; color: var(--gold); margin-bottom: 4px;" id="t-trial-title">🎁 Free Trial Active</div>
+            <div style="font-size: 11px; color: var(--text-sub);" id="trial-countdown">Trial ends in 23h 59m</div>
+        </div>
+        <div id="trial-expired-banner" style="display: none; background: rgba(234, 0, 56, 0.1); border: 1px solid #ea0038; border-radius: 8px; padding: 10px; margin-bottom: 12px; text-align: center; font-size: 12px; position: relative;">
+            <div style="font-weight: bold; color: #ea0038; margin-bottom: 4px;" id="t-trial-expired">⚠️ Free Trial Expired</div>
+            <div style="font-size: 11px; color: var(--text-sub);" id="t-trial-expired-desc">Upgrade to PRO to continue using premium features.</div>
+        </div>
+        
+        <div class="card" id="license-card" style="border-color: var(--gold);">
+            <div class="card-label" id="t-lbl-upgrade" style="color: var(--gold); margin-bottom: 8px;">👑 Upgrade to PRO</div>
+            <div class="input-group">
+                <input type="text" id="license-input" placeholder="Enter License Key...">
+                <button class="btn btn-gold" id="activate-pro-btn">Activate</button>
+            </div>
+            <div style="margin-top: 10px; text-align: center;">
+                <a href="https://whatshide-pro.lemonsqueezy.com/checkout/buy/e57ed999-04b2-479c-af8b-bbd7bbf509a6" target="_blank" id="t-btn-buy-license" style="color: var(--gold); font-size: 11.5px; text-decoration: none; font-weight: bold; border: 1px solid var(--gold); padding: 5px 12px; border-radius: 4px; display: inline-block; transition: all 0.2s;">🛒 Buy PRO License Key</a>
+            </div>
+        </div>
+
+        <div class="card" id="pro-status-card" style="display: none; border-color: var(--gold); text-align: center; padding: 15px;">
+            <div style="font-weight: bold; color: var(--gold); font-size: 14px; margin-bottom: 5px;" id="t-lbl-pro-active">👑 WhatsHide PRO Active</div>
+            <div id="pro-license-display" style="font-size: 11px; color: var(--text-sub); margin-bottom: 10px; word-break: break-all; font-family: monospace;"></div>
+            <button class="btn" id="deactivate-pro-btn" style="background: transparent; color: #ff3333; border: 1px solid #ff3333; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: bold;">Deactivate License</button>
+        </div>
+
+        <div class="section-title" id="t-sec-sidebar">Sidebar Components (External)</div>
+        <div class="card">
+            <div class="flex-row"><div class="card-label" id="t-lbl-sb-msgs">Blur Last Messages</div><label class="switch"><input type="checkbox" id="sidebar-msgs"><span class="slider"></span></label></div>
+            <div class="range-box"><input type="range" id="sidebar-msgs-val" min="1" max="25" value="8"><span class="val-badge" id="sidebar-msgs-text">8px</span></div>
+        </div>
+        <div class="card">
+            <div class="flex-row"><div class="card-label" id="t-lbl-sb-names">Blur Contact Names</div><label class="switch"><input type="checkbox" id="sidebar-names"><span class="slider"></span></label></div>
+            <div class="range-box"><input type="range" id="sidebar-names-val" min="1" max="25" value="8"><span class="val-badge" id="sidebar-names-text">8px</span></div>
+        </div>
+        <div class="card">
+            <div class="flex-row"><div class="card-label" id="t-lbl-sb-imgs">Blur Profile Pictures (Avatars)</div><label class="switch"><input type="checkbox" id="sidebar-imgs"><span class="slider"></span></label></div>
+            <div class="range-box"><input type="range" id="sidebar-imgs-val" min="1" max="30" value="12"><span class="val-badge" id="sidebar-imgs-text">12px</span></div>
+        </div>
+
+        <div class="section-title" id="t-sec-chat">Active Chat (Internal)</div>
+        <div class="card">
+            <div class="flex-row"><div class="card-label" id="t-lbl-chat-msgs">Blur Inner Chat Messages</div><label class="switch"><input type="checkbox" id="chat-msgs"><span class="slider"></span></label></div>
+            <div class="range-box"><input type="range" id="chat-msgs-val" min="1" max="25" value="8"><span class="val-badge" id="chat-msgs-text">8px</span></div>
+        </div>
+        <div class="card">
+            <div class="flex-row"><div class="card-label" id="t-lbl-chat-names">Blur Header Name & Info</div><label class="switch"><input type="checkbox" id="chat-names"><span class="slider"></span></label></div>
+            <div class="range-box"><input type="range" id="chat-names-val" min="1" max="25" value="8"><span class="val-badge" id="chat-names-text">8px</span></div>
+        </div>
+
+        <div class="section-title" id="t-sec-shortcuts"><span style="color: var(--gold);">★</span> PRO Shortcuts & Zen Mode</div>
+        <div class="card pro-feature">
+            <div class="flex-row">
+                <div class="card-label">
+                    <span id="t-lbl-zen-mode">Zen Mode (Clean Screen)</span><span class="pro-badge">PRO</span>
+                    <div class="tooltip-container">
+                        <span class="info-icon">ⓘ</span>
+                        <span class="tooltip-text" id="t-desc-zen-mode">Hides the contact sidebar automatically, giving you a clean, wide screen to chat without distractions.</span>
+                    </div>
+                </div>
+                <label class="switch"><input type="checkbox" id="zen-mode"><span class="slider"></span></label>
+            </div>
+            <div class="input-group" style="margin-top: 10px;">
+                <input type="text" id="zen-sc-input" class="shortcut-input" placeholder="Zen Shortcut..." readonly>
+            </div>
+        </div>
+        
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 5px;">
+                <span id="t-lbl-panic-sc">Panic Shortcut (Total Stealth)</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-panic-sc">Instantly redirects the tab to a safe page (like Google Search) and changes the tab icon and title when someone walks by.</span>
+                </div>
+            </div>
+            <div class="input-group">
+                <input type="text" id="panic-sc-input" class="shortcut-input" placeholder="Panic Shortcut..." readonly>
+                <button class="btn btn-danger" id="clear-panic-btn">Reset</button>
+            </div>
+            <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; color: var(--text-sub);" id="t-lbl-panic-target">Panic Page:</span>
+                <select id="panic-target" style="flex: 1; background: var(--bg-input); border: 1px solid rgba(255,255,255,0.05); color: #fff; padding: 6px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;">
+                    <option value="google" selected>Google Search</option>
+                    <option value="google-drive">Google Drive</option>
+                    <option value="outlook">Outlook Mail</option>
+                    <option value="wikipedia">Wikipedia</option>
+                    <option value="blank">Blank Page</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="section-title" id="t-sec-security"><span style="color: var(--gold);">★</span> PRO Security & Automation</div>
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 5px;">
+                <span id="t-lbl-smart-words">Smart Words Redaction</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-smart-words">Blur specific keywords or sensitive words in real-time (e.g., "salary", "invoice").</span>
+                </div>
+            </div>
+            <div class="input-group">
+                <input type="text" id="redact-word-input" placeholder="e.g. Invoice">
+                <button class="btn" id="add-word-btn">Add</button>
+            </div>
+            <div id="redact-words-list" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 120px; overflow-y: auto; padding: 2px;">
+                <!-- Word pills injected dynamically -->
+            </div>
+        </div>
+
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 5px;">
+                <span id="t-lbl-auto-lock">Auto-Lock Screen (Minutes)</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-auto-lock">Locks the extension dashboard automatically after a period of inactivity to prevent physical snooping.</span>
+                </div>
+            </div>
+            <div class="range-box"><input type="range" id="auto-lock" min="0" max="60" value="0"><span class="val-badge" id="auto-lock-text">0m (Off)</span></div>
+        </div>
+
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 5px;">
+                <span id="t-lbl-hover-delay">Hover Reveal Delay (Seconds)</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-hover-delay">Control the delay time before the blurred text is revealed when hovering, preventing accidental glances.</span>
+                </div>
+            </div>
+            <div class="range-box">
+                <input type="range" id="hover-delay" min="0" max="3" step="0.5" value="1.5">
+                <span class="val-badge" id="hover-delay-text">1.5s</span>
+            </div>
+        </div>
+
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 8px;">
+                <span id="t-lbl-auto-redact">Auto-Redact Sensitive Data</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-auto-redact">Automatically blurs phone numbers, prices, emails, and links in all chats to keep customer data safe.</span>
+                </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div class="flex-row"><span style="font-size: 12.5px;" id="t-lbl-redact-phones">Phone Numbers</span><label class="switch"><input type="checkbox" id="redact-phones"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;" id="t-lbl-redact-emails">Email Addresses</span><label class="switch"><input type="checkbox" id="redact-emails"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;" id="t-lbl-redact-links">Links & URLs</span><label class="switch"><input type="checkbox" id="redact-links"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;" id="t-lbl-redact-prices">Prices & Currency</span><label class="switch"><input type="checkbox" id="redact-prices"><span class="slider"></span></label></div>
+            </div>
+        </div>
+
+        <div class="card pro-feature" id="setup-pin-card">
+            <div class="card-label" style="margin-bottom: 5px;">
+                <span id="t-lbl-setup-pin">Setup App PIN Lock</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" id="t-desc-setup-pin">Password protect your privacy dashboard to prevent anyone else from disabling your blur options.</span>
+                </div>
+            </div>
+            <div class="input-group"><input type="password" id="new-pin-input" placeholder="4 Digits" maxlength="4" style="text-align: center;"><button class="btn" id="save-pin-btn">Set PIN</button></div>
+            <div id="recovery-code-display" style="display: none; background: rgba(255,215,0,0.1); padding: 10px; border-radius: 6px; border: 1px dashed var(--gold); margin-top: 10px; font-size: 11px; color: #fff; text-align: center;">
+                <span id="t-lbl-save-rec">Save this Recovery Code:</span><br><strong id="rec-code-text" style="font-size: 14px; letter-spacing: 2px; color: var(--gold);"></strong>
+            </div>
+        </div>
+        
+        <div class="card pro-feature" id="remove-pin-card" style="display: none;">
+            <div class="flex-row" style="margin-bottom: 0;">
+                <div class="card-label" id="t-lbl-pin-active" style="color: var(--accent);">🔒 PIN Protection Active</div>
+                <button class="btn" style="background: var(--danger);" id="remove-pin-btn">Disable</button>
+            </div>
+        </div>
+
+        <!-- Export / Import Settings -->
+        <div class="section-title" id="t-sec-data">⚙️ Data &amp; Backup</div>
+        <div class="card" style="display: flex; gap: 8px;">
+            <button class="btn" id="export-settings-btn" style="flex:1; font-size: 12px;">📤 Export Settings</button>
+            <button class="btn" id="import-settings-btn" style="flex:1; font-size: 12px; background: var(--bg-input); color: var(--text-main);">📥 Import Settings</button>
+            <input type="file" id="import-file-input" accept=".json" style="display:none">
+        </div>
+
+        <!-- New Auto-Redact Patterns -->
+        <div class="section-title" id="t-sec-adv-redact"><span style="color: var(--gold);">★</span> PRO Advanced Detection</div>
+        <div class="card pro-feature">
+            <div class="card-label" style="margin-bottom: 8px;">
+                <span>Auto-Detect Financial &amp; ID Data</span><span class="pro-badge">PRO</span>
+                <div class="tooltip-container">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text">Automatically blurs credit cards, IBANs, national IDs, and passport numbers found in chats.</span>
+                </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div class="flex-row"><span style="font-size: 12.5px;">Credit Card Numbers</span><label class="switch"><input type="checkbox" id="redact-cards"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;">IBAN Numbers</span><label class="switch"><input type="checkbox" id="redact-iban"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;">National IDs (Saudi/Gulf)</span><label class="switch"><input type="checkbox" id="redact-natid"><span class="slider"></span></label></div>
+                <div class="flex-row"><span style="font-size: 12.5px;">Passport Numbers</span><label class="switch"><input type="checkbox" id="redact-passport"><span class="slider"></span></label></div>
+            </div>
+        </div>
+
+        <!-- PrintScreen Protection -->
+        <div class="card pro-feature">
+            <div class="flex-row" style="margin-bottom: 0;">
+                <div class="card-label">
+                    <span>📸 PrintScreen Protection</span><span class="pro-badge">PRO</span>
+                    <div class="tooltip-container">
+                        <span class="info-icon">ⓘ</span>
+                        <span class="tooltip-text">Instantly blacks out the screen for 2 seconds when PrintScreen is pressed, preventing screenshots.</span>
+                    </div>
+                </div>
+                <label class="switch"><input type="checkbox" id="screenshot-protect"><span class="slider"></span></label>
+            </div>
+        </div>
+    </div>
+    <div id="toast">Saved! ✨</div>
+    <script src="popup.js"></script>
+</body>
+</html>

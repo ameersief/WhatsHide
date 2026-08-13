@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsHide: Boss Shield for WhatsApp Web",
+  "version": "6.0",
+  "permissions": ["storage", "scripting", "tabs"],
+  "host_permissions": [
+    "*://web.whatsapp.com/*",
+    "https://api.gumroad.com/*",
+    "https://*.lemonsqueezy.com/*",
+    "https://dqzhxjjhpugwhohuhlhd.supabase.co/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": { 
+    "default_popup": "popup.html",
+    "default_icon": "icon.jpg"
+  },
+  "icons": {
+    "16": "icon.jpg",
+    "48": "icon.jpg",
+    "128": "icon.jpg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://web.whatsapp.com/*"],
+      "css": ["style.css"],
+      "js": ["content.js"]
+    }
+  ]
+}
