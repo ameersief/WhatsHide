@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WhatsHide - WhatsApp Web Privacy Shield",
   "version": "6.6",
-  "description": "Ultimate Privacy Shield & Stealth Camouflage for WhatsApp Web. Blur chats, hide messages, auto-redact sensitive data, and instant panic stealth.",
+  "description": "Blur messages, hide contact names, auto-redact sensitive data, and instant panic stealth camouflage for WhatsApp Web.",
   "permissions": ["storage", "scripting", "tabs"],
   "host_permissions": [
     "*://web.whatsapp.com/*",
