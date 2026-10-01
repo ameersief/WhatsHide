@@ -17,8 +17,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "✅ JavaScript Syntax Check Passed." -ForegroundColor Green
 
-# Create Zip Archive excluding developer documentation
-$filesToZip = Get-ChildItem -Path $SourceDir -Exclude "*.md", "build.ps1", ".git*"
+# Create Zip Archive excluding developer documentation and landing page
+$filesToZip = Get-ChildItem -Path $SourceDir -Exclude "*.md", "build.ps1", ".git*", "landing"
 Compress-Archive -Path $filesToZip.FullName -DestinationPath $ZipOutput -Force
 
 Write-Host "🎉 Package created successfully at: $ZipOutput" -ForegroundColor Green
