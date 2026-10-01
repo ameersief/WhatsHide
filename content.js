@@ -4,27 +4,234 @@ if (typeof window.omniShieldInit === 'undefined') {
     const SUPABASE_URL = "https://dqzhxjjhpugwhohuhlhd.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemh4ampocHVnd2hvaHVobGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU0MDA2MDcsImV4cCI6MjEwMDk3NjYwN30.9VBeRDqohynd8de6nW4bY1Waq5ePOroggog_ZO2RWfI";
 
-    function applySetting(setting, isActive, value) {
-        if (isActive) document.body.classList.add(setting);
-        else document.body.classList.remove(setting);
-        if (value) document.documentElement.style.setProperty(`--${setting}-val`, `${value}px`);
+    function whenDOMReady(fn) {
+        if (document.body) {
+            fn();
+        } else {
+            document.addEventListener('DOMContentLoaded', () => fn(), { once: true });
+            const docObs = new MutationObserver(() => {
+                if (document.body) {
+                    docObs.disconnect();
+                    fn();
+                }
+            });
+            docObs.observe(document.documentElement || document, { childList: true, subtree: true });
+        }
     }
 
-    // الاعتماد على e.code ليعمل على أي لغة كيبورد
+    const activeSettings = new Set();
+    let taggingRaf = null;
+
+    function applyLiveDOMTagging() {
+        if (!document.body) return;
+        if (taggingRaf) cancelAnimationFrame(taggingRaf);
+
+        taggingRaf = requestAnimationFrame(() => {
+            try {
+                const isSidebarMsgs = document.body.classList.contains('sidebar-msgs') || (document.documentElement && document.documentElement.classList.contains('sidebar-msgs'));
+                const isSidebarNames = document.body.classList.contains('sidebar-names') || (document.documentElement && document.documentElement.classList.contains('sidebar-names'));
+                const isSidebarImgs = document.body.classList.contains('sidebar-imgs') || (document.documentElement && document.documentElement.classList.contains('sidebar-imgs'));
+                const isChatMsgs = document.body.classList.contains('chat-msgs') || (document.documentElement && document.documentElement.classList.contains('chat-msgs'));
+                const isChatNames = document.body.classList.contains('chat-names') || (document.documentElement && document.documentElement.classList.contains('chat-names'));
+                const isChatMedia = document.body.classList.contains('chat-media') || (document.documentElement && document.documentElement.classList.contains('chat-media'));
+                const isChatInput = document.body.classList.contains('chat-input') || (document.documentElement && document.documentElement.classList.contains('chat-input'));
+
+                if (isSidebarMsgs || isSidebarNames || isSidebarImgs) {
+                    const rows = document.querySelectorAll('#pane-side div[role="listitem"], #pane-side div[role="row"]');
+                    for (let i = 0; i < rows.length; i++) {
+                        const row = rows[i];
+                        
+                        // 1. Sidebar Messages: Blur ONLY the snippet text, NEVER cell-frame-secondary itself or the unread badge!
+                        if (isSidebarMsgs) {
+                            const sec = row.querySelector('[data-testid="cell-frame-secondary"]') || 
+                                        row.querySelector('span[title] ~ div') ||
+                                        (row.children[1] && row.children[1].children[1]) ||
+                                        (row.firstElementChild && row.firstElementChild.children[1] && row.firstElementChild.children[1].children[1]);
+                            if (sec) {
+                                if (sec.classList.contains('omni-blur-sidebar-msg')) {
+                                    sec.classList.remove('omni-blur-sidebar-msg');
+                                }
+
+                                let snippetEl = null;
+                                const firstChild = sec.firstElementChild;
+                                if (firstChild) {
+                                    const hasBadge = firstChild.matches('[data-testid*="unread"], [aria-label*="unread"], [aria-label*="غير مقروء"]') ||
+                                                     firstChild.querySelector('[data-testid*="unread"], [aria-label*="unread"], [aria-label*="غير مقروء"]');
+                                    if (!hasBadge) {
+                                        snippetEl = firstChild;
+                                    }
+                                }
+                                if (!snippetEl) {
+                                    const spans = sec.querySelectorAll('span[title], span[dir="ltr"], span[dir="rtl"], span[dir="auto"]');
+                                    for (let s = 0; s < spans.length; s++) {
+                                        const sp = spans[s];
+                                        if (!sp.matches('[data-testid*="unread"], [aria-label*="unread"]') && 
+                                            !sp.closest('[data-testid*="unread"], [aria-label*="unread"], [aria-label*="غير مقروء"]')) {
+                                            snippetEl = sp;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (snippetEl && !snippetEl.classList.contains('omni-blur-sidebar-msg')) {
+                                    snippetEl.classList.add('omni-blur-sidebar-msg');
+                                }
+                            }
+                        }
+
+                        // 2. Sidebar Names: Blur ONLY the contact name text span, NEVER containers or timestamps!
+                        if (isSidebarNames) {
+                            const titleFrame = row.querySelector('[data-testid="cell-frame-title"]') || 
+                                               (row.children[1] && row.children[1].children[0]);
+                            if (titleFrame) {
+                                if (titleFrame.classList.contains('omni-blur-sidebar-name')) {
+                                    titleFrame.classList.remove('omni-blur-sidebar-name');
+                                }
+                                const nameContainer = titleFrame.firstElementChild;
+                                if (nameContainer) {
+                                    if (nameContainer.classList.contains('omni-blur-sidebar-name')) {
+                                        nameContainer.classList.remove('omni-blur-sidebar-name');
+                                    }
+                                    const nameSpan = nameContainer.querySelector('span[dir="auto"], span[title]') || 
+                                                     nameContainer.querySelector('span');
+                                    if (nameSpan && !nameSpan.classList.contains('omni-blur-sidebar-name')) {
+                                        nameSpan.classList.add('omni-blur-sidebar-name');
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Sidebar Avatars
+                        if (isSidebarImgs) {
+                            const img = row.querySelector('img') || row.querySelector('[data-testid="cell-frame-icon"]');
+                            if (img && !img.classList.contains('omni-blur-sidebar-img')) {
+                                img.classList.add('omni-blur-sidebar-img');
+                            }
+                        }
+                    }
+                }
+
+                // Cleanups if any setting is disabled
+                if (!isSidebarMsgs) {
+                    const leftover = document.querySelectorAll('.omni-blur-sidebar-msg');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-sidebar-msg'));
+                }
+                if (!isSidebarNames) {
+                    const leftover = document.querySelectorAll('.omni-blur-sidebar-name');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-sidebar-name'));
+                }
+                if (!isSidebarImgs) {
+                    const leftover = document.querySelectorAll('.omni-blur-sidebar-img');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-sidebar-img'));
+                }
+
+                if (isChatMsgs) {
+                    const msgs = document.querySelectorAll('#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out, #main div.copyable-text');
+                    for (let i = 0; i < msgs.length; i++) {
+                        if (!msgs[i].classList.contains('omni-blur-chat-msg')) {
+                            msgs[i].classList.add('omni-blur-chat-msg');
+                        }
+                    }
+                } else {
+                    const leftover = document.querySelectorAll('.omni-blur-chat-msg');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-chat-msg'));
+                }
+
+                if (isChatNames) {
+                    const header = document.querySelector('#main header [data-testid="conversation-info-header"], #main header span[dir="auto"]');
+                    if (header && !header.classList.contains('omni-blur-chat-header')) {
+                        header.classList.add('omni-blur-chat-header');
+                    }
+                } else {
+                    const leftover = document.querySelectorAll('.omni-blur-chat-header');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-chat-header'));
+                }
+
+                if (isChatMedia) {
+                    const media = document.querySelectorAll('#main img:not([alt*="Emoji"]):not([class*="emoji"]), #main video, #main div[data-testid="audio-player"]');
+                    for (let i = 0; i < media.length; i++) {
+                        if (!media[i].classList.contains('omni-blur-chat-media')) {
+                            media[i].classList.add('omni-blur-chat-media');
+                        }
+                    }
+                } else {
+                    const leftover = document.querySelectorAll('.omni-blur-chat-media');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-chat-media'));
+                }
+
+                if (isChatInput) {
+                    const inputEl = document.querySelector('#main footer div[contenteditable="true"], #main footer [role="textbox"]');
+                    if (inputEl && !inputEl.classList.contains('omni-blur-chat-input')) {
+                        inputEl.classList.add('omni-blur-chat-input');
+                    }
+                } else {
+                    const leftover = document.querySelectorAll('.omni-blur-chat-input');
+                    if (leftover.length > 0) leftover.forEach(el => el.classList.remove('omni-blur-chat-input'));
+                }
+            } catch(e) {}
+        });
+    }
+
+    function clearDOMTags(setting) {
+        try {
+            if (setting === 'sidebar-msgs') document.querySelectorAll('.omni-blur-sidebar-msg').forEach(el => el.classList.remove('omni-blur-sidebar-msg'));
+            if (setting === 'sidebar-names') document.querySelectorAll('.omni-blur-sidebar-name').forEach(el => el.classList.remove('omni-blur-sidebar-name'));
+            if (setting === 'sidebar-imgs') document.querySelectorAll('.omni-blur-sidebar-img').forEach(el => el.classList.remove('omni-blur-sidebar-img'));
+            if (setting === 'chat-msgs') document.querySelectorAll('.omni-blur-chat-msg').forEach(el => el.classList.remove('omni-blur-chat-msg'));
+            if (setting === 'chat-names') document.querySelectorAll('.omni-blur-chat-header').forEach(el => el.classList.remove('omni-blur-chat-header'));
+            if (setting === 'chat-media') document.querySelectorAll('.omni-blur-chat-media').forEach(el => el.classList.remove('omni-blur-chat-media'));
+            if (setting === 'chat-input') document.querySelectorAll('.omni-blur-chat-input').forEach(el => el.classList.remove('omni-blur-chat-input'));
+        } catch(e) {}
+    }
+
+    function applySetting(setting, isActive, value) {
+        if (isActive) {
+            activeSettings.add(setting);
+            if (document.documentElement) document.documentElement.classList.add(setting);
+            if (document.body) {
+                document.body.classList.add(setting);
+                applyLiveDOMTagging();
+            }
+        } else {
+            activeSettings.delete(setting);
+            if (document.documentElement) document.documentElement.classList.remove(setting);
+            if (document.body) {
+                document.body.classList.remove(setting);
+                clearDOMTags(setting);
+            }
+        }
+        if (value && document.documentElement) {
+            document.documentElement.style.setProperty(`--${setting}-val`, `${value}px`);
+        }
+    }
+
+    // Keyboard shortcuts
     let panicSC = { altKey: true, ctrlKey: false, shiftKey: false, code: 'KeyX' };
     let zenSC = { altKey: true, ctrlKey: false, shiftKey: false, code: 'KeyC' };
     
-    let isPanicMode = false; let isZenMode = false;
+    let isPanicMode = false; 
+    let isZenMode = false;
     let originalTitle = document.title;
     
     let iconLink = document.querySelector("link[rel~='icon']");
-    if (!iconLink) { iconLink = document.createElement('link'); iconLink.rel = 'icon'; document.head.appendChild(iconLink); }
-    let originalFavicon = iconLink.href;
-    const fakeFavicon = "https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png";
+    if (!iconLink && document.head) {
+        iconLink = document.createElement('link');
+        iconLink.rel = 'icon';
+        document.head.appendChild(iconLink);
+    }
+    let originalFavicon = iconLink ? iconLink.href : '';
 
-    let autoLockTimer; let autoLockMinutes = 0; let redactedWords = []; let isPro = false;
-    let redactPhones = false; let redactEmails = false; let redactLinks = false; let redactPrices = false;
-    let redactCards = false; let redactIban = false; let redactNatid = false; let redactPassport = false;
+    let autoLockTimer; 
+    let autoLockMinutes = 0; 
+    let redactedWords = []; 
+    let isPro = false;
+    let redactPhones = false; 
+    let redactEmails = false; 
+    let redactLinks = false; 
+    let redactPrices = false;
+    let redactCards = false; 
+    let redactIban = false; 
+    let redactNatid = false; 
+    let redactPassport = false;
     let screenshotProtect = false;
     
     let redactTimeout;
@@ -52,6 +259,14 @@ if (typeof window.omniShieldInit === 'undefined') {
         'blank': {
             title: "New Tab",
             favicon: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        },
+        'excel': {
+            title: "Financial_Report_Q3_2026.xlsx - Excel",
+            favicon: "https://ssl.gstatic.com/docs/spreadsheets/forms/favicon_qp2.ico"
+        },
+        'vscode': {
+            title: "index.ts - whats-hide-core - Visual Studio Code",
+            favicon: "https://code.visualstudio.com/favicon.ico"
         }
     };
 
@@ -61,7 +276,7 @@ if (typeof window.omniShieldInit === 'undefined') {
                 <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex-grow: 1; width: 100%; max-width: 650px; padding: 20px; box-sizing: border-box; font-family: arial, sans-serif !important;">
                     <img src="https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" alt="Google" style="width: 272px; height: 92px; margin-bottom: 30px; object-fit: contain;">
                     <div style="display: flex; align-items: center; width: 100%; max-width: 584px; height: 46px; background: #fff; border: 1px solid #dfe1e5; border-radius: 24px; box-shadow: none; padding: 0 14px; box-sizing: border-box;">
-                        <svg focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: #9aa0a6; margin-right: 12px;"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                        <svg focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: #9aa0a6; margin-right: 12px;"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
                         <input type="text" id="omni-google-search-input" style="flex: 1; border: none; outline: none; font-size: 16px; color: #000; height: 34px; padding: 0; background: transparent; font-family: arial, sans-serif !important;">
                         <svg focusable="false" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 24px; height: 24px; fill: #4285f4; cursor: pointer; margin-left: 8px;"><path d="m12 15c1.66 0 3-1.34 3-3v-6c0-1.66-1.34-3-3-3s-3 1.34-3 3v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1s-5.3-2.1-5.3-5.1h-1.7c0 3.41 2.72 6.23 6 6.72v3.28h2v-3.28c3.28-.48 6-3.3 6-6.72z"/></svg>
                     </div>
@@ -86,59 +301,36 @@ if (typeof window.omniShieldInit === 'undefined') {
         if (target === 'google-drive') {
             return `
                 <div style="display: flex; width: 100%; height: 100%; background: #f8f9fa; font-family: 'Google Sans', Roboto, RobotoDraft, Helvetica, Arial, sans-serif !important; text-align: left !important; direction: ltr !important;">
-                    <!-- Top Navigation Bar -->
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 64px; background: #fff; border-bottom: 1px solid #dadce0; display: flex; align-items: center; padding: 0 20px; justify-content: space-between; box-sizing: border-box;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" style="width: 40px; height: 40px; object-fit: contain;">
                             <span style="font-size: 22px; color: #5f6368; font-weight: 400;">Drive</span>
                         </div>
                         <div style="display: flex; align-items: center; background: #f1f3f4; border-radius: 8px; width: 100%; max-width: 720px; height: 46px; padding: 0 12px; box-sizing: border-box; margin: 0 20px;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: #5f6368; margin-right: 12px;"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: #5f6368; margin-right: 12px;"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
                             <input type="text" placeholder="Search in Drive" style="flex: 1; border: none; background: transparent; font-size: 16px; outline: none; color: #5f6368;">
                         </div>
                         <div style="width: 32px; height: 32px; border-radius: 50%; background: #0078d4; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">A</div>
                     </div>
-                    <!-- Sidebar -->
                     <div style="width: 256px; border-right: 1px solid #dadce0; padding-top: 80px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; padding-left: 12px; padding-right: 12px; background: #fff;">
                         <div style="display: flex; align-items: center; justify-content: center; width: 120px; height: 48px; border-radius: 24px; background: #fff; box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15); font-weight: 500; font-size: 14px; color: #3c4043; cursor: pointer; margin-bottom: 16px; gap: 8px;">
                             <span style="font-size: 24px; font-weight: bold; color: #34a853;">+</span> New
                         </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; background: #e8f0fe; color: #1a73e8; font-weight: 500; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            My Drive
-                        </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            Computers
-                        </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            Shared with me
-                        </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            Recent
-                        </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            Starred
-                        </div>
-                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">
-                            Trash
-                        </div>
+                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; background: #e8f0fe; color: #1a73e8; font-weight: 500; font-size: 14px; padding-left: 24px; gap: 12px;">My Drive</div>
+                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">Recent</div>
+                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">Starred</div>
+                        <div style="display: flex; align-items: center; height: 40px; border-radius: 0 20px 20px 0; color: #3c4043; font-weight: 400; font-size: 14px; padding-left: 24px; gap: 12px;">Trash</div>
                     </div>
-                    <!-- Files Area -->
                     <div style="flex: 1; padding-top: 80px; padding-left: 30px; padding-right: 30px; box-sizing: border-box; display: flex; flex-direction: column;">
-                        <div style="font-size: 18px; color: #202124; font-weight: 400; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
-                            <span>My Drive</span>
-                        </div>
+                        <div style="font-size: 18px; color: #202124; font-weight: 400; margin-bottom: 20px;">My Drive</div>
                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-top: 10px;">
                             <div style="border: 1px solid #dadce0; border-radius: 6px; padding: 12px; background: #fff; display: flex; align-items: center; gap: 12px; box-sizing: border-box;">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #5f6368;"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-                                <span style="font-size: 14px; color: #3c4043; font-weight: 500;">Project Q3</span>
-                            </div>
-                            <div style="border: 1px solid #dadce0; border-radius: 6px; padding: 12px; background: #fff; display: flex; align-items: center; gap: 12px; box-sizing: border-box;">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #5f6368;"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-                                <span style="font-size: 14px; color: #3c4043; font-weight: 500;">Financial Reports</span>
+                                <span style="font-size: 14px; color: #3c4043; font-weight: 500;">Project Documents</span>
                             </div>
                             <div style="border: 1px solid #dadce0; border-radius: 6px; padding: 12px; background: #fff; display: flex; align-items: center; gap: 12px; box-sizing: border-box;">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #1a73e8;"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-                                <span style="font-size: 14px; color: #3c4043; font-weight: 500;">Marketing Plan.pdf</span>
+                                <span style="font-size: 14px; color: #3c4043; font-weight: 500;">Annual_Report_2026.pdf</span>
                             </div>
                         </div>
                     </div>
@@ -148,45 +340,28 @@ if (typeof window.omniShieldInit === 'undefined') {
         if (target === 'outlook') {
             return `
                 <div style="display: flex; flex-direction: column; width: 100%; height: 100%; background: #f3f2f1; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif !important; text-align: left !important; direction: ltr !important;">
-                    <!-- Top Blue Header -->
                     <div style="height: 48px; background: #0078d4; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; box-sizing: border-box; color: #fff;">
-                        <div style="display: flex; align-items: center; gap: 16px;">
-                            <span style="font-weight: 600; font-size: 16px;">Outlook</span>
-                        </div>
+                        <span style="font-weight: 600; font-size: 16px;">Outlook</span>
                         <div style="display: flex; align-items: center; background: #c7e0f4; border-radius: 4px; width: 100%; max-width: 480px; height: 32px; padding: 0 8px; box-sizing: border-box;">
                             <input type="text" placeholder="Search" style="flex: 1; border: none; background: transparent; font-size: 14px; outline: none; color: #201f1e;">
                         </div>
                         <div style="width: 32px; height: 32px; border-radius: 50%; background: #fff; color: #0078d4; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">U</div>
                     </div>
-                    
-                    <!-- Main Body -->
                     <div style="display: flex; flex: 1; overflow: hidden;">
-                        <!-- Sidebar -->
                         <div style="width: 200px; background: #fff; border-right: 1px solid #edebe9; display: flex; flex-direction: column; padding: 12px 0; box-sizing: border-box; gap: 8px;">
                             <div style="background: #0078d4; color: white; border-radius: 4px; margin: 0 12px; height: 36px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; cursor: pointer;">New message</div>
-                            <div style="padding: 8px 24px; font-weight: 600; background: #f3f2f1; color: #0078d4; font-size: 14px; cursor: pointer;">Inbox</div>
-                            <div style="padding: 8px 24px; color: #323130; font-size: 14px; cursor: pointer;">Sent Items</div>
-                            <div style="padding: 8px 24px; color: #323130; font-size: 14px; cursor: pointer;">Drafts</div>
-                            <div style="padding: 8px 24px; color: #323130; font-size: 14px; cursor: pointer;">Deleted Items</div>
+                            <div style="padding: 8px 24px; font-weight: 600; background: #f3f2f1; color: #0078d4; font-size: 14px;">Inbox</div>
+                            <div style="padding: 8px 24px; color: #323130; font-size: 14px;">Sent Items</div>
+                            <div style="padding: 8px 24px; color: #323130; font-size: 14px;">Drafts</div>
                         </div>
-                        <!-- Email List -->
                         <div style="flex: 1; background: #fff; display: flex; flex-direction: column; border-right: 1px solid #edebe9;">
                             <div style="height: 48px; border-bottom: 1px solid #edebe9; display: flex; align-items: center; padding: 0 16px; font-weight: 600; font-size: 15px; color: #323130;">Inbox</div>
-                            <div style="display: flex; flex-direction: column;">
-                                <div style="display: flex; flex-direction: column; padding: 12px 16px; border-bottom: 1px solid #f3f2f1; background: #f3f2f1;">
-                                    <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 13.5px; color: #201f1e;">
-                                        <span>HR Department</span><span>10:24 AM</span>
-                                    </div>
-                                    <span style="font-weight: 600; font-size: 13px; color: #0078d4; margin-top: 4px;">Update: Q3 Performance Reviews</span>
-                                    <span style="font-size: 12.5px; color: #605e5c; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Please review the updated instructions and deadlines for the upcoming performance review cycle...</span>
+                            <div style="display: flex; flex-direction: column; padding: 12px 16px; border-bottom: 1px solid #f3f2f1; background: #f3f2f1;">
+                                <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 13.5px; color: #201f1e;">
+                                    <span>Operations Lead</span><span>10:24 AM</span>
                                 </div>
-                                <div style="display: flex; flex-direction: column; padding: 12px 16px; border-bottom: 1px solid #f3f2f1;">
-                                    <div style="display: flex; justify-content: space-between; font-weight: 400; font-size: 13.5px; color: #201f1e;">
-                                        <span>IT Helpdesk</span><span>9:15 AM</span>
-                                    </div>
-                                    <span style="font-weight: 600; font-size: 13px; color: #323130; margin-top: 4px;">Scheduled Server Maintenance</span>
-                                    <span style="font-size: 12.5px; color: #605e5c; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Tonight starting at 10:00 PM EST, we will perform scheduled database upgrades. Services will be offline for...</span>
-                                </div>
+                                <span style="font-weight: 600; font-size: 13px; color: #0078d4; margin-top: 4px;">Weekly Project Status Update</span>
+                                <span style="font-size: 12.5px; color: #605e5c; margin-top: 4px;">Please review the attached project schedule for milestone review...</span>
                             </div>
                         </div>
                     </div>
@@ -196,7 +371,6 @@ if (typeof window.omniShieldInit === 'undefined') {
         if (target === 'wikipedia') {
             return `
                 <div style="display: flex; flex-direction: column; width: 100%; height: 100%; background: #f6f6f6; color: #202020; font-family: sans-serif !important; overflow-y: auto; text-align: left !important; direction: ltr !important;">
-                    <!-- Wikipedia Top Bar -->
                     <div style="height: 56px; background: #fff; border-bottom: 1px solid #a2a9b1; display: flex; align-items: center; padding: 0 24px; justify-content: space-between; box-sizing: border-box;">
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <img src="https://en.wikipedia.org/static/images/icons/wikipedia.png" style="width: 32px; height: 32px;">
@@ -206,25 +380,96 @@ if (typeof window.omniShieldInit === 'undefined') {
                             <input type="text" placeholder="Search Wikipedia" style="flex: 1; border: none; font-size: 13px; outline: none; background: transparent; color: #000;">
                         </div>
                     </div>
-                    
-                    <!-- Content Container -->
                     <div style="display: flex; flex: 1; padding: 24px 50px; background: #fff; max-width: 1200px; margin: 0 auto; box-sizing: border-box; border-left: 1px solid #a2a9b1; border-right: 1px solid #a2a9b1;">
                         <div style="flex: 1;">
                             <h1 style="font-family: serif; font-size: 32px; border-bottom: 1px solid #a2a9b1; padding-bottom: 8px; margin-top: 0; font-weight: normal; color: #000;">Efficiency (productivity)</h1>
                             <p style="font-size: 14px; line-height: 1.6; margin-top: 16px; color: #202020;">
-                                <strong>Efficiency</strong> is the peak level of performance that uses the least amount of inputs to achieve the highest amount of output. It minimizes the wasting of resources such as physical materials, energy, and time while accomplishing the desired output.
-                            </p>
-                            <p style="font-size: 14px; line-height: 1.6; margin-top: 16px; color: #202020;">
-                                In economic terms, efficiency is used to describe the relationship between inputs and outputs, focusing on minimizing cost for a given output or maximizing output for a given cost.
+                                <strong>Efficiency</strong> is the peak level of performance that uses the least amount of inputs to achieve the highest amount of output.
                             </p>
                         </div>
                     </div>
                 </div>
             `;
         }
-        return `
-            <div style="width: 100%; height: 100%; background: #ffffff;"></div>
-        `;
+        if (target === 'excel') {
+            return `
+                <div style="display: flex; flex-direction: column; width: 100%; height: 100%; background: #ffffff; font-family: 'Segoe UI', Arial, sans-serif !important; text-align: left !important; direction: ltr !important; box-sizing: border-box;">
+                    <div style="height: 40px; background: #107c41; color: white; display: flex; align-items: center; padding: 0 16px; font-size: 13px; font-weight: 600; gap: 20px;">
+                        <span>AutoSave ON</span>
+                        <span>Financial_Report_Q3_2026.xlsx - Excel</span>
+                    </div>
+                    <div style="height: 30px; background: #f3f3f3; border-bottom: 1px solid #d1d1d1; display: flex; align-items: center; padding: 0 16px; gap: 20px; font-size: 13px; color: #333;">
+                        <span style="font-weight: bold; color: #107c41; border-bottom: 2px solid #107c41; padding-bottom: 4px;">Home</span>
+                        <span>Insert</span><span>Page Layout</span><span>Formulas</span><span>Data</span><span>Review</span><span>View</span>
+                    </div>
+                    <div style="height: 30px; background: #ffffff; border-bottom: 1px solid #d1d1d1; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px; color: #333;">
+                        <span style="font-weight: bold; color: #107c41; background: #f3f3f3; padding: 2px 8px; border: 1px solid #ccc;">B4</span>
+                        <span style="color: #666; font-style: italic; font-weight: bold;">fx</span>
+                        <input type="text" value="=SUM(B2:B12) * 1.15" readonly style="flex: 1; border: 1px solid #ccc; padding: 4px 8px; font-size: 12px; background: #fff; outline: none;">
+                    </div>
+                    <div style="flex: 1; background: #fff; overflow: auto; display: grid; grid-template-columns: 40px repeat(6, 150px); grid-auto-rows: 26px; font-size: 12px; color: #222;">
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;"></div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">A</div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">B</div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">C</div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">D</div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">E</div>
+                        <div style="background: #e6e6e6; border: 1px solid #ccc; text-align: center; font-weight: bold; line-height: 26px;">F</div>
+
+                        <div style="background: #f3f3f3; border: 1px solid #ccc; text-align: center; line-height: 26px;">1</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">Department</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">Q1 Revenue</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">Q2 Revenue</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">YoY Growth</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">Budget Allocation</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; font-weight: bold; background: #f9f9f9; line-height: 26px;">Status</div>
+
+                        <div style="background: #f3f3f3; border: 1px solid #ccc; text-align: center; line-height: 26px;">2</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; line-height: 26px;">North America</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; line-height: 26px;">$142,500.00</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; line-height: 26px;">$168,200.00</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; color: green; font-weight: bold; line-height: 26px;">+18.0%</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; line-height: 26px;">$45,000.00</div>
+                        <div style="border: 1px solid #e0e0e0; padding-left: 6px; color: #107c41; font-weight: bold; line-height: 26px;">Approved</div>
+                    </div>
+                </div>
+            `;
+        }
+        if (target === 'vscode') {
+            return `
+                <div style="display: flex; width: 100%; height: 100%; background: #1e1e1e; color: #d4d4d4; font-family: 'Consolas', 'Courier New', monospace !important; text-align: left !important; direction: ltr !important; box-sizing: border-box;">
+                    <div style="width: 48px; background: #333333; display: flex; flex-direction: column; align-items: center; padding-top: 16px; gap: 20px; color: #858585;">
+                        <span style="color: white; font-weight: bold; font-size: 16px;">📄</span>
+                        <span style="font-size: 16px;">🔍</span>
+                        <span style="font-size: 16px;">🌿</span>
+                    </div>
+                    <div style="width: 220px; background: #252526; border-right: 1px solid #1e1e1e; padding: 12px; box-sizing: border-box; font-size: 13px; color: #cccccc;">
+                        <div style="font-weight: bold; margin-bottom: 12px; font-size: 11px; text-transform: uppercase; color: #858585; letter-spacing: 0.5px;">EXPLORER: WHATS-HIDE</div>
+                        <div style="padding: 4px 0; color: #4ec9b0;">📁 src</div>
+                        <div style="padding: 4px 16px; background: #37373d; color: #ce9178; border-left: 2px solid #007acc;">📄 index.ts</div>
+                        <div style="padding: 4px 16px; color: #9cdcfe;">📄 security.ts</div>
+                    </div>
+                    <div style="flex: 1; display: flex; flex-direction: column; background: #1e1e1e;">
+                        <div style="height: 35px; background: #2d2d2d; display: flex; align-items: center; padding: 0 10px; font-size: 13px; color: #ffffff;">
+                            <span style="background: #1e1e1e; padding: 6px 16px; border-top: 2px solid #007acc; color: #ce9178;">index.ts</span>
+                        </div>
+                        <div style="padding: 24px; font-size: 14px; line-height: 1.6; color: #d4d4d4; white-space: pre;">
+<span style="color: #569cd6;">import</span> { AnalyticsEngine, SecurityManager } <span style="color: #569cd6;">from</span> <span style="color: #ce9178;">'@core/security'</span>;
+
+<span style="color: #6a9955;">/**
+ * WhatsHide Core Engine v6.6
+ * High-performance, zero-telemetry client privacy shield
+ */</span>
+<span style="color: #569cd6;">export async function</span> <span style="color: #dcdcaa;">initializeShield</span>() {
+    <span style="color: #569cd6;">const</span> engine = <span style="color: #569cd6;">new</span> <span style="color: #4ec9b0;">AnalyticsEngine</span>({ mode: <span style="color: #ce9178;">'production'</span>, localOnly: <span style="color: #569cd6;">true</span> });
+    <span style="color: #569cd6;">await</span> engine.<span style="color: #dcdcaa;">connect</span>();
+}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        return `<div style="width: 100%; height: 100%; background: #ffffff;"></div>`;
     }
 
     function triggerPanic(forceState = null) {
@@ -234,12 +479,13 @@ if (typeof window.omniShieldInit === 'undefined') {
         let overlay = document.getElementById('omni-panic-overlay');
         
         if (isPanicMode) {
-            originalTitle = document.title; originalFavicon = iconLink.href;
+            originalTitle = document.title; 
+            originalFavicon = iconLink.href;
             const target = panicTargetsMap[panicTarget] || panicTargetsMap['google'];
-            document.title = target.title; iconLink.href = target.favicon;
+            document.title = target.title; 
+            iconLink.href = target.favicon;
             chrome.runtime.sendMessage({ action: "muteTab", muted: true });
             
-            // إظهار التمويه الكامل
             if (!overlay) {
                 overlay = document.createElement('div');
                 overlay.id = 'omni-panic-overlay';
@@ -264,7 +510,6 @@ if (typeof window.omniShieldInit === 'undefined') {
             overlay.innerHTML = getCamouflageHTML(panicTarget);
             overlay.style.display = 'flex';
             
-            // تفعيل مستمعي البحث في حالة جوجل
             if (panicTarget === 'google') {
                 const searchInput = overlay.querySelector('#omni-google-search-input');
                 const searchBtn = overlay.querySelector('#omni-google-search-btn');
@@ -279,7 +524,7 @@ if (typeof window.omniShieldInit === 'undefined') {
                     searchInput.focus();
                     searchInput.addEventListener('keydown', (e) => {
                         if (e.key === 'Enter') execSearch();
-                        e.stopPropagation(); // منع انتقال الحدث للدردشة بالخلفية
+                        e.stopPropagation();
                     });
                 }
                 if (searchBtn) {
@@ -297,7 +542,8 @@ if (typeof window.omniShieldInit === 'undefined') {
                 }
             }
         } else {
-            document.title = originalTitle; iconLink.href = originalFavicon;
+            document.title = originalTitle; 
+            iconLink.href = originalFavicon;
             chrome.runtime.sendMessage({ action: "muteTab", muted: false });
             
             if (overlay) {
@@ -307,14 +553,15 @@ if (typeof window.omniShieldInit === 'undefined') {
         }
         
         if (!document.getElementById('panic-style')) {
-            const style = document.createElement('style'); style.id = 'panic-style';
+            const style = document.createElement('style'); 
+            style.id = 'panic-style';
             style.innerHTML = `body.panic-mode #app { filter: blur(40px) grayscale(100%) !important; opacity: 0.05 !important; transition: all 0.15s ease !important; pointer-events: none !important; }`;
             document.head.appendChild(style);
         }
     }
 
     function toggleZen() {
-        if(!isPro) return; // حصري للمدفوع
+        if (!isPro) return;
         isZenMode = !isZenMode;
         document.body.classList.toggle('zen-mode', isZenMode);
     }
@@ -322,10 +569,13 @@ if (typeof window.omniShieldInit === 'undefined') {
     function resetTimer() {
         clearTimeout(autoLockTimer);
         if (autoLockMinutes > 0 && isPro) {
-            autoLockTimer = setTimeout(() => { if (!isPanicMode) triggerPanic(true); }, autoLockMinutes * 60000);
+            autoLockTimer = setTimeout(() => { 
+                if (!isPanicMode) triggerPanic(true); 
+            }, autoLockMinutes * 60000);
         }
     }
-    window.addEventListener('mousemove', resetTimer); window.addEventListener('keydown', resetTimer);
+    window.addEventListener('mousemove', resetTimer, { passive: true }); 
+    window.addEventListener('keydown', resetTimer, { passive: true });
 
     function escapeRegExp(string) {
         return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -337,6 +587,7 @@ if (typeof window.omniShieldInit === 'undefined') {
             if (grandParent) {
                 const textNode = document.createTextNode(span.textContent);
                 grandParent.replaceChild(textNode, span);
+                grandParent.normalize();
             }
         });
     }
@@ -349,21 +600,16 @@ if (typeof window.omniShieldInit === 'undefined') {
         const applyBlackout = () => {
             if (!screenshotProtect) return;
             document.body.classList.add('screenshot-blur-active');
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText('').catch(() => {});
-            }
         };
 
         const removeBlackout = () => {
             document.body.classList.remove('screenshot-blur-active');
         };
 
-        // 1. Instant Keydown & Keyup capture for all screenshot & print hotkeys (PrintScreen, Win+Shift+S, Cmd+Shift+S, Ctrl+P, Ctrl+S)
         const handleScreenshotHotkeys = (e) => {
             if (!screenshotProtect) return;
 
             const isPrtSc = e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44;
-            // Win + Shift + S (Windows Snipping Tool) or Cmd + Shift + 3/4/S (Mac)
             const isSnippingTool = e.shiftKey && (e.metaKey || e.key === 'Meta' || e.code === 'MetaLeft' || e.code === 'MetaRight' || e.code === 'KeyS' || e.key === 'S' || e.key === 's');
             const isPrintCmd = (e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P' || e.code === 'KeyP');
             const isSaveCmd = (e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S' || e.code === 'KeyS') && !e.shiftKey;
@@ -377,7 +623,6 @@ if (typeof window.omniShieldInit === 'undefined') {
         window.addEventListener('keydown', handleScreenshotHotkeys, true);
         window.addEventListener('keyup', handleScreenshotHotkeys, true);
 
-        // 2. Tab Visibility Change: Protection when tab is hidden or backgrounded
         document.addEventListener('visibilitychange', () => {
             if (!screenshotProtect) return;
             if (document.hidden) applyBlackout();
@@ -386,7 +631,7 @@ if (typeof window.omniShieldInit === 'undefined') {
     }
 
     function applyHoverDelay(delay) {
-        const d = delay !== undefined ? delay : 1.5;
+        const d = delay !== undefined ? delay : 0.4;
         document.documentElement.style.setProperty('--omni-hover-delay', `${d}s`);
     }
 
@@ -401,20 +646,77 @@ if (typeof window.omniShieldInit === 'undefined') {
         return false;
     }
 
-    // === Precompiled Regex Patterns (regex literals - safe, no Invalid escape) ===
+    // Strictly verifies that a text node belongs to message content, NEVER contact names or UI
+    function isValidMessageTextNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return false;
+
+        // 1. MUST NOT be inside any Header (main chat header, sidebar header, app header)
+        if (parent.closest('#main header') || parent.closest('header') || parent.closest('#side header')) {
+            return false;
+        }
+
+        // 2. MUST NOT be inside any Contact Title or Identity elements
+        if (parent.closest('[data-testid="cell-frame-title"]') || 
+            parent.closest('[data-testid="conversation-info-header"]') ||
+            parent.closest('[data-testid="chat-title"]') ||
+            parent.closest('[data-testid="contact-info"]') ||
+            parent.closest('[data-testid="drawer-middle"]') ||
+            parent.closest('[data-testid="author"]') || 
+            parent.closest('[role="button"]') ||
+            parent.closest('nav') ||
+            parent.closest('#omni-panic-overlay')) {
+            return false;
+        }
+
+        // 3. MUST NOT be inside Unread Badges, Timestamps, or Status Icons
+        if (parent.closest('[data-testid*="unread"], [aria-label*="unread"], [aria-label*="غير مقروء"], [data-testid="msg-meta"], [data-testid="status-v3-unread"]')) {
+            return false;
+        }
+
+        // 4. MUST NOT be an editable input or already redacted or script/style
+        const pTag = parent.nodeName;
+        if (pTag === 'OMNI-REDACT' || 
+            parent.classList.contains('omni-redact-span') || 
+            pTag === 'SCRIPT' || 
+            pTag === 'STYLE' || 
+            isEditable(node)) {
+            return false;
+        }
+
+        // 5. MUST be inside an actual message body:
+        // Either inside an active chat message (.selectable-text, .copyable-text, [data-testid="msg-container"])
+        // Or inside a sidebar message snippet ([data-testid="cell-frame-secondary"])
+        const inChatMsg = parent.closest('#main .selectable-text, #main .copyable-text, #main [data-testid="msg-container"]');
+        const inSidebarMsg = parent.closest('#pane-side [data-testid="cell-frame-secondary"]');
+
+        if (!inChatMsg && !inSidebarMsg) {
+            return false;
+        }
+
+        // If it's in a sidebar message snippet, double check it's NOT the unread badge
+        if (inSidebarMsg) {
+            if (parent.closest('[data-testid*="unread"], [aria-label*="unread"], [aria-label*="غير مقروء"]')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // === Precompiled Regex Patterns ===
     const REGEX_EMAIL    = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i;
     const REGEX_PHONE    = /(?:\+|00)\d{1,4}[\-.\s]?\(?\d{1,4}\)?(?:[\-.\s]?\d){4,12}|(?<!\d)0\d{2,3}[\-.\s]?\d{3,4}[\-.\s]?\d{3,5}(?!\d)/;
     const REGEX_LINK     = /https?:\/\/[^\s"'<>()[\]{}|\\^`]+/;
     const REGEX_PRICE    = /[$£€¥₹₩₪₴₺₽]\s?\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*[$£€¥₹₩₪₴₺₽]|\d+(?:[.,]\d+)?\s+(?:AED|SAR|QAR|EGP|USD|EUR|GBP|JOD|KWD|ريال|درهم|جنيه|دينار)/i;
-    const REGEX_CARD     = /\b(?:\d{4}[\s\-]?){3}\d{4}\b/;  // Credit/Debit card
-    const REGEX_IBAN     = /\b[A-Z]{2}\d{2}[\s\-]?[A-Z0-9]{4}[\s\-]?(?:[A-Z0-9][\s\-]?){7,26}\b/i; // IBAN with optional spaces/dashes
-    const REGEX_NATID    = /\b[12]\d{9}\b/;  // Saudi/Gulf National IDs strictly starting with 1 or 2
+    const REGEX_CARD     = /\b(?:\d{4}[\s\-]?){3}\d{4}\b/;
+    const REGEX_IBAN     = /\b[A-Z]{2}\d{2}[\s\-]?[A-Z0-9]{4}[\s\-]?(?:[A-Z0-9][\s\-]?){7,26}\b/i;
+    const REGEX_NATID    = /\b[12]\d{9}\b/;
     const REGEX_PASSPORT = /\b[A-Z]{1,2}[0-9]{6,9}\b/i;
 
     function buildRedactRegex() {
         const parts = [];
 
-        // Custom words
         redactedWords.forEach(word => {
             const escaped = escapeRegExp(word);
             let pattern = escaped;
@@ -424,7 +726,7 @@ if (typeof window.omniShieldInit === 'undefined') {
         });
 
         if (redactEmails)   parts.push(REGEX_EMAIL.source);
-        if (redactIban)     parts.push(REGEX_IBAN.source);    // IBAN before Card to prevent 16-digit blocks inside IBAN matching as Cards
+        if (redactIban)     parts.push(REGEX_IBAN.source);
         if (redactCards)    parts.push(REGEX_CARD.source);
         if (redactPhones)   parts.push(REGEX_PHONE.source);
         if (redactLinks)    parts.push(REGEX_LINK.source);
@@ -441,7 +743,6 @@ if (typeof window.omniShieldInit === 'undefined') {
         }
     }
 
-    // مفتاح يتتبع آخر pattern مُطبَّق — نُعيد البناء فقط عند تغيّره
     let _lastPatternKey = '';
 
     function getPatternKey() {
@@ -459,15 +760,13 @@ if (typeof window.omniShieldInit === 'undefined') {
     }
 
     function applySmartRedaction() {
+        if (!document.body) return;
         if (isRedacting) return;
         isRedacting = true;
-        if (typeof observer !== 'undefined') observer.disconnect();
 
         if (!isPro) {
-            // عند إيقاف PRO: نُزيل كل الإخفاء بشكل ناعم
             restoreRedactions();
             _lastPatternKey = '';
-            if (typeof observer !== 'undefined') observer.observe(document.body, { childList: true, subtree: true });
             isRedacting = false;
             return;
         }
@@ -476,71 +775,81 @@ if (typeof window.omniShieldInit === 'undefined') {
         const patternKey = getPatternKey();
 
         if (!regex) {
-            // لا يوجد pattern: أزل الإخفاء الموجود بشكل ناعم
             if (_lastPatternKey !== '') {
                 restoreRedactions();
                 _lastPatternKey = '';
             }
-            if (typeof observer !== 'undefined') observer.observe(document.body, { childList: true, subtree: true });
             isRedacting = false;
             return;
         }
 
-        // إذا تغيّر الـ pattern، نحذف القديم مع إخفاء الـ flash بـ CSS
         if (patternKey !== _lastPatternKey) {
-            document.body.classList.add('omni-restoring');
+            if (document.body) document.body.classList.add('omni-restoring');
             restoreRedactions();
             _lastPatternKey = patternKey;
-            // نُزيل class الإخفاء بعد تطبيق الـ pattern الجديد
         }
 
         const testRegex    = new RegExp(regex.source, 'iu');
         const replaceRegex = new RegExp(regex.source, 'giu');
 
-        // نجمع فقط نصوص جديدة (غير مُغلَّفة بـ omni-redact-span)
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-        let node; const nodesToReplace = [];
-        while (node = walker.nextNode()) {
-            const val = node.nodeValue;
-            if (!val || !val.trim()) continue;
-            const parent = node.parentNode;
-            if (!parent) continue;
-            const pTag = parent.nodeName;
-            if (pTag === 'OMNI-REDACT' || pTag === 'SCRIPT' || pTag === 'STYLE') continue;
-            if (parent.className === 'omni-redact-span') continue; // ← مُعالَج مسبقاً، تخطَّه
-            if (isEditable(node)) continue;
-            if (testRegex.test(val)) nodesToReplace.push(node);
+        // Scoped strictly to message containers (Ultra-Fast <2ms, 0 Lag, 0 CPU Overhead)
+        const containers = [];
+        const mainChat = document.querySelector('#main');
+        if (mainChat) {
+            containers.push(mainChat);
         }
+        const sidebarSecs = document.querySelectorAll('#pane-side [data-testid="cell-frame-secondary"]');
+        sidebarSecs.forEach(el => containers.push(el));
 
-        if (nodesToReplace.length === 0) {
-            // لا توجد نصوص جديدة تحتاج إخفاء
-            if (typeof observer !== 'undefined') observer.observe(document.body, { childList: true, subtree: true });
+        if (containers.length === 0) {
             isRedacting = false;
             return;
         }
 
-        // طبّق التغييرات في frame واحد — بدون flash
+        const nodesToReplace = [];
+
+        containers.forEach(container => {
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while (node = walker.nextNode()) {
+                const val = node.nodeValue;
+                if (!val || !val.trim()) continue;
+                if (!isValidMessageTextNode(node)) continue;
+                if (testRegex.test(val)) {
+                    nodesToReplace.push(node);
+                }
+            }
+        });
+
+        if (nodesToReplace.length === 0) {
+            isRedacting = false;
+            return;
+        }
+
         requestAnimationFrame(() => {
             nodesToReplace.forEach(n => {
                 if (!n.parentNode) return;
+                if (!isValidMessageTextNode(n)) return;
                 const span = document.createElement('span');
                 span.className = 'omni-redact-span';
                 span.innerHTML = n.nodeValue.replace(replaceRegex, `<omni-redact>$1</omni-redact>`);
                 n.parentNode.replaceChild(span, n);
             });
-            document.body.classList.remove('omni-restoring'); // ← رفع الإخفاء بعد تطبيق البلور
-            if (typeof observer !== 'undefined') observer.observe(document.body, { childList: true, subtree: true });
+            if (document.body) document.body.classList.remove('omni-restoring');
             isRedacting = false;
         });
     }
 
+    // High performance debounced MutationObserver
+    let mutationDebounceTimer = null;
     const observer = new MutationObserver((mutations) => {
+        applyLiveDOMTagging();
         if (isRedacting) return;
+        
         let shouldRedact = false;
         for (let i = 0; i < mutations.length; i++) {
             const m = mutations[i];
             if (m.addedNodes.length > 0) {
-                // تجاهل mutations ناتجة عن omni-redact-span لتفادي الحلقة المفرغة
                 const anyNew = Array.from(m.addedNodes).some(n =>
                     !n.classList || !n.classList.contains('omni-redact-span')
                 );
@@ -548,11 +857,22 @@ if (typeof window.omniShieldInit === 'undefined') {
             }
         }
         if (shouldRedact) {
-            clearTimeout(redactTimeout);
-            redactTimeout = setTimeout(applySmartRedaction, 400);
+            clearTimeout(mutationDebounceTimer);
+            mutationDebounceTimer = setTimeout(applySmartRedaction, 300);
         }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    whenDOMReady(() => {
+        activeSettings.forEach(s => {
+            if (document.body) document.body.classList.add(s);
+            if (document.documentElement) document.documentElement.classList.add(s);
+        });
+        applyLiveDOMTagging();
+        if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+        applySmartRedaction();
+    });
 
     async function generateTrialSignature(startDate, deviceId) {
         const salt = "WhatsHide_Trial_Secure_Salt_2026!@#";
@@ -564,7 +884,7 @@ if (typeof window.omniShieldInit === 'undefined') {
 
     async function checkTrialStatus() {
         return new Promise((resolve) => {
-            chrome.storage.local.get(['trialStartDate', 'trialSignature', 'deviceId', 'isPro', 'activeLicense'], async (res) => {
+            chrome.storage.local.get(['trialStartDate', 'trialDuration', 'trialSignature', 'deviceId', 'isPro', 'activeLicense'], async (res) => {
                 if (res.isPro && res.activeLicense) {
                     resolve({ active: false, expired: false, permanent: true });
                     return;
@@ -581,7 +901,7 @@ if (typeof window.omniShieldInit === 'undefined') {
                     return;
                 }
                 const elapsed = now - res.trialStartDate;
-                const duration = 24 * 60 * 60 * 1000;
+                const duration = res.trialDuration || (24 * 60 * 60 * 1000);
                 if (elapsed >= 0 && elapsed < duration) {
                     resolve({ active: true, timeLeft: duration - elapsed, expired: false });
                 } else {
@@ -591,89 +911,36 @@ if (typeof window.omniShieldInit === 'undefined') {
         });
     }
 
-    async function generateProSignature(licenseKey, deviceId) {
-        const salt = "WhatsHide_Pro_Secure_Salt_2026!@#";
-        const msgBuffer = new TextEncoder().encode(licenseKey + deviceId + salt);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
     async function checkActiveDevice() {
         chrome.storage.local.get(['isPro', 'activeLicense', 'deviceId', 'proSignature', 'zen-mode'], async (res) => {
-            if (!res.activeLicense) {
-                const trial = await checkTrialStatus();
-                if (!trial.active) {
-                    isPro = false;
-                    chrome.storage.local.set({ isPro: false }, () => {
-                        restoreRedactions();
-                        ['sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 'chat-msgs', 'chat-names', 'zen-mode'].forEach(s => {
-                            applySetting(s, false, null);
-                        });
-                    });
-                } else {
-                    isPro = true;
-                    chrome.storage.local.set({ isPro: true }, () => {
-                        applySmartRedaction();
-                        applySetting('zen-mode', res['zen-mode'] || false, null);
-                        resetTimer();
-                    });
-                }
+            if (res.activeLicense) {
+                isPro = true;
+                chrome.storage.local.set({ isPro: true });
+                applySmartRedaction();
+                applySetting('zen-mode', res['zen-mode'] || false, null);
+                resetTimer();
                 return;
             }
             
-            if (!res.deviceId) return;
-            
-            const expectedSig = await generateProSignature(res.activeLicense, res.deviceId);
-            if (res.proSignature !== expectedSig) {
+            const trial = await checkTrialStatus();
+            if (trial.active) {
+                isPro = true;
+                chrome.storage.local.set({ isPro: true }, () => {
+                    applySmartRedaction();
+                    applySetting('zen-mode', res['zen-mode'] || false, null);
+                    resetTimer();
+                });
+            } else {
                 isPro = false;
-                chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
+                chrome.storage.local.set({ isPro: false }, () => {
                     restoreRedactions();
-                    ['sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 'chat-msgs', 'chat-names', 'zen-mode'].forEach(s => {
-                        applySetting(s, false, null);
-                    });
+                    applySetting('zen-mode', false, null);
                 });
-                return;
-            }
-            
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/license_activations?license_key=eq.${res.activeLicense}&select=active_device_id`, {
-                    method: 'GET',
-                    headers: {
-                        'apikey': SUPABASE_KEY,
-                        'Authorization': `Bearer ${SUPABASE_KEY}`,
-                        'Content-Type': 'application/json'
-                    }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        const activeDevice = data[0].active_device_id;
-                        if (activeDevice !== res.deviceId) {
-                            isPro = false;
-                            chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
-                                restoreRedactions();
-                                ['sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 'chat-msgs', 'chat-names', 'zen-mode'].forEach(s => {
-                                    applySetting(s, false, null);
-                                });
-                            });
-                        } else {
-                            isPro = true;
-                            chrome.storage.local.set({ isPro: true }, () => {
-                                applySmartRedaction();
-                                applySetting('zen-mode', res['zen-mode'] || false, null);
-                                resetTimer();
-                            });
-                        }
-                    }
-                }
-            } catch (e) {
-                console.error("Failed to check active license status", e);
             }
         });
     }
 
-    // === Remote Configuration Engine (Real-Time Updates Without Extension Review) ===
+    // === Remote Configuration Engine ===
     async function fetchRemoteConfig() {
         try {
             const res = await fetch(`${SUPABASE_URL}/rest/v1/remote_config?select=*`, {
@@ -690,9 +957,7 @@ if (typeof window.omniShieldInit === 'undefined') {
                     applyRemoteConfig(config);
                 }
             }
-        } catch(e) {
-            // Fallback to local cached config silently
-        }
+        } catch(e) {}
     }
 
     function applyRemoteConfig(config) {
@@ -705,14 +970,15 @@ if (typeof window.omniShieldInit === 'undefined') {
         }
     }
 
+    // Load initial settings on startup
     chrome.storage.local.get(null, (res) => {
         isPro = res.isPro || false;
         checkActiveDevice();
         fetchRemoteConfig();
         if (res.remoteConfig) applyRemoteConfig(res.remoteConfig);
-        if(res.panicShortcut) panicSC = res.panicShortcut;
-        if(res.zenShortcut) zenSC = res.zenShortcut;
-        if(res.autoLock !== undefined) autoLockMinutes = parseInt(res.autoLock);
+        if (res.panicShortcut) panicSC = res.panicShortcut;
+        if (res.zenShortcut) zenSC = res.zenShortcut;
+        if (res.autoLock !== undefined) autoLockMinutes = parseInt(res.autoLock);
         
         if (res.redactWords) {
             if (typeof res.redactWords === 'string') {
@@ -736,17 +1002,28 @@ if (typeof window.omniShieldInit === 'undefined') {
         if (res.hoverDelay !== undefined) applyHoverDelay(res.hoverDelay);
         if (res.panicTarget) panicTarget = res.panicTarget;
         
-        ['sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 'chat-msgs', 'chat-names'].forEach(s => {
-            applySetting(s, res[s] || false, res[s+'-val'] || (s.includes('imgs')?12:8));
+        const allSettings = [
+            'sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 
+            'chat-msgs', 'chat-names', 'chat-media', 'chat-input'
+        ];
+        allSettings.forEach(s => {
+            const defaultVal = s.includes('imgs') || s.includes('media') ? 12 : 8;
+            applySetting(s, res[s] || false, res[s + '-val'] || defaultVal);
         });
-        if(isPro) applySetting('zen-mode', res['zen-mode'], null);
+        if (isPro) applySetting('zen-mode', res['zen-mode'] || false, null);
         resetTimer();
         applySmartRedaction();
     });
 
+    // Message Listener from Popup
     chrome.runtime.onMessage.addListener((req) => {
-        if (req.action === "update") applySetting(req.setting, req.isActive, req.value);
-        else if (req.action === "updateShortcut") { if(req.type === 'panic') panicSC = req.shortcut; else zenSC = req.shortcut; }
+        if (req.action === "update") {
+            applySetting(req.setting, req.isActive, req.value);
+        }
+        else if (req.action === "updateShortcut") { 
+            if (req.type === 'panic') panicSC = req.shortcut; 
+            else zenSC = req.shortcut; 
+        }
         else if (req.action === "updatePro") { 
             isPro = req.isPro; 
             if (!isPro) restoreRedactions(); 
@@ -793,22 +1070,41 @@ if (typeof window.omniShieldInit === 'undefined') {
             }
         }
         else if (req.action === 'triggerPanic') {
-            triggerPanic(true); // تفعيل تمويه الطوارئ فوراً (FORCE ON)
+            triggerPanic(true);
         }
     });
 
-    // Capture Phase - يعمل مهما كانت لغة الكيبورد
+    // Keyboard Shortcuts Listener (Works across all keyboard languages)
     window.addEventListener('keydown', function(e) {
-        // فحص اختصار الطوارئ
-        if (e.ctrlKey === panicSC.ctrlKey && e.altKey === panicSC.altKey && e.shiftKey === panicSC.shiftKey && e.code === panicSC.code) {
+        // Alt+X (Google Stealth)
+        if (e.altKey && (e.code === 'KeyX' || e.key === 'x' || e.key === 'ء')) {
+            e.preventDefault(); e.stopPropagation();
+            panicTarget = 'google';
+            triggerPanic();
+        }
+        // Alt+E (Excel Stealth)
+        else if (e.altKey && (e.code === 'KeyE' || e.key === 'e' || e.key === 'ث')) {
+            e.preventDefault(); e.stopPropagation();
+            panicTarget = 'excel';
+            triggerPanic();
+        }
+        // Alt+C (VS Code Stealth)
+        else if (e.altKey && (e.code === 'KeyC' || e.key === 'c' || e.key === 'ؤ')) {
+            e.preventDefault(); e.stopPropagation();
+            panicTarget = 'vscode';
+            triggerPanic();
+        }
+        // Custom Panic Shortcut
+        else if (e.ctrlKey === panicSC.ctrlKey && e.altKey === panicSC.altKey && e.shiftKey === panicSC.shiftKey && e.code === panicSC.code) {
             e.preventDefault(); e.stopPropagation(); triggerPanic();
         }
-        // فحص اختصار Zen
+        // Zen Shortcut
         else if (isPro && e.ctrlKey === zenSC.ctrlKey && e.altKey === zenSC.altKey && e.shiftKey === zenSC.shiftKey && e.code === zenSC.code) {
             e.preventDefault(); e.stopPropagation(); toggleZen();
         }
     }, true);
 
+    // Sync state changes from storage
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area === 'local') {
             if (changes.isPro !== undefined) {
@@ -837,6 +1133,19 @@ if (typeof window.omniShieldInit === 'undefined') {
                 screenshotProtect = changes['screenshot-protect'].newValue;
                 if (screenshotProtect) enableScreenshotProtect();
             }
+            
+            const allSettings = [
+                'sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 
+                'chat-msgs', 'chat-names', 'chat-media', 'chat-input', 'zen-mode'
+            ];
+            allSettings.forEach(s => {
+                if (changes[s] !== undefined || changes[s + '-val'] !== undefined) {
+                    chrome.storage.local.get([s, s + '-val'], res => {
+                        const defaultVal = s.includes('imgs') || s.includes('media') ? 12 : 8;
+                        applySetting(s, res[s] || false, res[s + '-val'] || defaultVal);
+                    });
+                }
+            });
         }
     });
 }

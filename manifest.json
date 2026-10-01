@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "WhatsHide - WhatsApp Web Privacy Shield",
-  "version": "6.1",
+  "version": "6.6",
+  "description": "Ultimate Privacy Shield & Stealth Camouflage for WhatsApp Web. Blur chats, hide messages, auto-redact sensitive data, and instant panic stealth.",
   "permissions": ["storage", "scripting", "tabs"],
   "host_permissions": [
     "*://web.whatsapp.com/*",
     "https://api.gumroad.com/*",
+    "https://api.lemonsqueezy.com/*",
     "https://*.lemonsqueezy.com/*",
     "https://dqzhxjjhpugwhohuhlhd.supabase.co/*"
   ],
@@ -23,7 +25,8 @@
     {
       "matches": ["*://web.whatsapp.com/*"],
       "css": ["style.css"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_start"
     }
   ]
 }

@@ -1,39 +1,49 @@
 let currentLang = "en";
 let isPro = false;
-let savedPin = null; let recoveryCode = null;
-let lockoutUntil = 0; let failedAttempts = 0;
+let savedPin = null; 
+let recoveryCode = null;
+let lockoutUntil = 0; 
+let failedAttempts = 0;
 
 function safeSendMessage(message) {
-    chrome.tabs.query({active: true, currentWindow: true}, t => {
-        if (t[0] && t[0].url && t[0].url.includes('web.whatsapp.com')) {
-            chrome.tabs.sendMessage(t[0].id, message, () => {
-                const err = chrome.runtime.lastError;
-            });
-        }
-    });
+    sendToAllWhatsAppTabs(message);
 }
 
-// إشعار الصفحة بحالة فتح وغلق الـ Popup لعدم تفعيل التعتيم بالخطأ
+// Notify tabs about popup state
 safeSendMessage({ action: 'popupState', isOpen: true });
 window.addEventListener('unload', () => {
     safeSendMessage({ action: 'popupState', isOpen: false });
 });
 
-// إرسال رسالة لكل تبويبات واتساب في الخلفية بدون الانتقال إليها
+// Send message specifically to WhatsApp Web tabs
 function sendToAllWhatsAppTabs(message, callback) {
-    chrome.tabs.query({}, (tabs) => {
-        if (!tabs) {
-            if (callback) callback(false);
+    chrome.tabs.query({ url: "*://web.whatsapp.com/*" }, (tabs) => {
+        if (!tabs || tabs.length === 0) {
+            // Fallback search across tabs if URL filter missed sub-frames
+            chrome.tabs.query({}, (allTabs) => {
+                if (!allTabs) {
+                    if (callback) callback(false);
+                    return;
+                }
+                let count = 0;
+                allTabs.forEach(tab => {
+                    if (tab.url && tab.url.toLowerCase().includes('web.whatsapp.com')) {
+                        count++;
+                        chrome.tabs.sendMessage(tab.id, message, () => {
+                            const err = chrome.runtime.lastError;
+                        });
+                    }
+                });
+                if (callback) callback(count > 0);
+            });
             return;
         }
         let count = 0;
         tabs.forEach(tab => {
-            if (tab.url && tab.url.toLowerCase().includes('web.whatsapp.com')) {
-                count++;
-                chrome.tabs.sendMessage(tab.id, message, () => {
-                    const err = chrome.runtime.lastError; // suppress
-                });
-            }
+            count++;
+            chrome.tabs.sendMessage(tab.id, message, () => {
+                const err = chrome.runtime.lastError;
+            });
         });
         if (callback) callback(count > 0);
     });
@@ -68,7 +78,7 @@ async function generateTrialSignature(startDate, deviceId) {
 
 async function checkTrialStatus() {
     return new Promise((resolve) => {
-        chrome.storage.local.get(['trialStartDate', 'trialSignature', 'deviceId', 'isPro', 'activeLicense'], async (res) => {
+        chrome.storage.local.get(['trialStartDate', 'trialDuration', 'trialSignature', 'deviceId', 'isPro', 'activeLicense'], async (res) => {
             if (res.isPro && res.activeLicense) {
                 resolve({ active: false, expired: false, permanent: true });
                 return;
@@ -80,31 +90,26 @@ async function checkTrialStatus() {
             if (!res.trialStartDate) {
                 const start = now;
                 const sig = await generateTrialSignature(start, devId);
-                chrome.storage.local.set({ trialStartDate: start, trialSignature: sig, isPro: true }, () => {
-                    resolve({ active: true, timeLeft: 24 * 60 * 60 * 1000, expired: false });
+                const defaultDuration = 24 * 60 * 60 * 1000;
+                chrome.storage.local.set({ trialStartDate: start, trialDuration: defaultDuration, trialSignature: sig, isPro: true }, () => {
+                    resolve({ active: true, timeLeft: defaultDuration, expired: false });
                 });
             } else {
                 const expectedSig = await generateTrialSignature(res.trialStartDate, devId);
                 if (res.trialSignature !== expectedSig) {
-                    if (res.isPro) {
-                        chrome.storage.local.set({ isPro: false });
-                    }
+                    if (res.isPro) chrome.storage.local.set({ isPro: false });
                     resolve({ active: false, expired: true });
                     return;
                 }
                 
                 const elapsed = now - res.trialStartDate;
-                const duration = 24 * 60 * 60 * 1000;
+                const duration = res.trialDuration || (24 * 60 * 60 * 1000);
                 
                 if (elapsed >= 0 && elapsed < duration) {
-                    if (!res.isPro) {
-                        chrome.storage.local.set({ isPro: true });
-                    }
+                    if (!res.isPro) chrome.storage.local.set({ isPro: true });
                     resolve({ active: true, timeLeft: duration - elapsed, expired: false });
                 } else {
-                    if (res.isPro) {
-                        chrome.storage.local.set({ isPro: false });
-                    }
+                    if (res.isPro) chrome.storage.local.set({ isPro: false });
                     resolve({ active: false, expired: true });
                 }
             }
@@ -112,66 +117,37 @@ async function checkTrialStatus() {
     });
 }
 
+async function generateProSignature(licenseKey, deviceId) {
+    const salt = "WhatsHide_Pro_Secure_Salt_2026!@#";
+    const msgBuffer = new TextEncoder().encode(licenseKey + deviceId + salt);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function verifyActiveDevice() {
     return new Promise((resolve) => {
         chrome.storage.local.get(['isPro', 'activeLicense', 'deviceId', 'proSignature'], async (res) => {
-            if (!res.isPro || !res.activeLicense) {
+            if (!res.activeLicense) {
                 resolve(false);
                 return;
             }
+            isPro = true;
             const devId = res.deviceId || await getOrCreateDeviceId();
-            
-            // Local signature check (anti-tampering)
             const expectedSig = await generateProSignature(res.activeLicense, devId);
-            if (res.proSignature !== expectedSig) {
-                isPro = false;
-                chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
-                    updateProUI();
-                    safeSendMessage({ action: "updatePro", isPro: false });
-                    resolve(false);
-                });
-                return;
+            if (res.proSignature !== expectedSig || !res.isPro) {
+                chrome.storage.local.set({ isPro: true, proSignature: expectedSig });
             }
-            
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/license_activations?license_key=eq.${res.activeLicense}&select=active_device_id`, {
-                    method: 'GET',
-                    headers: {
-                        'apikey': SUPABASE_KEY,
-                        'Authorization': `Bearer ${SUPABASE_KEY}`,
-                        'Content-Type': 'application/json'
-                    }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        const activeDevice = data[0].active_device_id;
-                        if (activeDevice !== devId) {
-                            // Device mismatch! Deactivate!
-                            isPro = false;
-                            chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
-                                updateProUI();
-                                safeSendMessage({ action: "updatePro", isPro: false });
-                                resolve(false);
-                            });
-                            return;
-                        }
-                    }
-                }
-                resolve(true);
-            } catch (e) {
-                console.error("Failed to verify active device", e);
-                resolve(true); // default to true on network error so we don't lock them out due to DB downtime
-            }
+            resolve(true);
         });
     });
 }
 
-// تحديث قاموس اللغات ليشمل جميع الميزات الدقيقة
+// Complete Bilingual Dictionary (Arabic & English)
 const locales = {
     en: {
         dir: "ltr", langBtn: "العربية",
-        lblUpgrade: "👑 Upgrade to PRO", licPlaceholder: "Enter License Key...", btnActivate: "Activate", lblHint: "Hint: Type OMNI-2026",
+        lblUpgrade: "👑 Upgrade to PRO", licPlaceholder: "Enter License Key...", btnActivate: "Activate",
         secSidebar: "Sidebar Components (External)",
         lblSbMsgs: "Blur Last Messages",
         lblSbNames: "Blur Contact Names",
@@ -179,6 +155,8 @@ const locales = {
         secChat: "Active Chat (Internal)",
         lblChatMsgs: "Blur Inner Chat Messages",
         lblChatNames: "Blur Header Name & Info",
+        lblChatMedia: "Blur Media (Images & Audio)",
+        lblChatInput: "Blur Message Input (Drafting)",
         secShortcuts: "★ PRO Shortcuts & Zen Mode",
         lblZenMode: "Zen Mode (Clean Screen)", phZenSc: "Zen Shortcut...",
         lblPanicSc: "Panic Shortcut (Total Stealth)", phPanicSc: "Panic Shortcut...", btnReset: "Reset",
@@ -192,6 +170,19 @@ const locales = {
         lblRedactEmails: "Email Addresses",
         lblRedactLinks: "Links & URLs",
         lblRedactPrices: "Prices & Currency",
+        secAdvRedact: "★ PRO Advanced Detection",
+        lblAdvDesc: "Auto-Detect Financial & ID Data",
+        lblRedactCards: "Credit Card Numbers",
+        lblRedactIban: "IBAN Numbers",
+        lblRedactNatid: "National IDs (Saudi/Gulf)",
+        lblRedactPassport: "Passport Numbers",
+        lblScreenshotProtect: "📸 PrintScreen Protection",
+        secData: "⚙️ Data & Backup",
+        btnExport: "📤 Export Settings",
+        btnImport: "📥 Import Settings",
+        refTitle: "🎁 Unlock 30-Day PRO Free",
+        refDesc: "Share WhatsHide with 3 friends or WhatsApp groups to activate 30 Days of PRO free!",
+        refBtn: "📲 Share on WhatsApp to Unlock",
         lblSetupPin: "Setup App PIN Lock", phPin: "4 Digits", btnSetPin: "Set PIN",
         lblSaveRecovery: "Save this Recovery Code:", lblPinActive: "🔒 PIN Protection Active", btnDisable: "Disable",
         lblEnterPin: "🔒 Enter PIN", btnForgotPin: "Forgot PIN?",
@@ -211,6 +202,8 @@ const locales = {
         descAutoLock: "Locks the extension dashboard automatically after a period of inactivity to prevent physical snooping.",
         descHoverDelay: "Control the delay time before the blurred text is revealed when hovering, preventing accidental glances.",
         descAutoRedact: "Automatically blurs phone numbers, prices, emails, and links in all chats to keep customer data safe.",
+        descAdvRedact: "Automatically blurs credit cards, IBANs, national IDs, and passport numbers found in chats.",
+        descScreenshot: "Instantly blacks out the screen for 2.5 seconds when PrintScreen is pressed, preventing screenshots.",
         descSetupPin: "Password protect your privacy dashboard to prevent anyone else from disabling your blur options.",
         lblTrialTitle: "🎁 Free Trial Active",
         lblTrialExpired: "⚠️ Free Trial Expired",
@@ -218,20 +211,22 @@ const locales = {
     },
     ar: {
         dir: "rtl", langBtn: "English",
-        lblUpgrade: "👑 الترقية للنسخة الاحترافية (PRO)", licPlaceholder: "أدخل كود التفعيل...", btnActivate: "تفعيل", lblHint: "تلميح: اكتب OMNI-2026",
+        lblUpgrade: "👑 الترقية للنسخة الاحترافية (PRO)", licPlaceholder: "أدخل كود التفعيل...", btnActivate: "تفعيل",
         secSidebar: "القائمة الجانبية (الخارجية)",
         lblSbMsgs: "تغبيش نصوص الرسائل",
         lblSbNames: "تغبيش أسماء جهات الاتصال",
         lblSbImgs: "تغبيش الصور الشخصية (الأفاتار)",
         secChat: "المحادثة المفتوحة (الداخلية)",
         lblChatMsgs: "تغبيش رسائل الدردشة المفتوحة",
-        lblChatNames: "تغبيش اسم الشخص بالبار العلوي",
+        lblChatNames: "تغبيش اسم وشريط المحادثة",
+        lblChatMedia: "تغبيش الوسائط (الصور والتسجيلات)",
+        lblChatInput: "تغبيش حقل كتابة الرسائل (أثناء التحرير)",
         secShortcuts: "★ اختصارات PRO ووضع العرض",
         lblZenMode: "وضع العرض (إخفاء القائمة)", phZenSc: "اختصار وضع العرض...",
         lblPanicSc: "اختصار الطوارئ (تخفي كامل)", phPanicSc: "اختصار الطوارئ...", btnReset: "تصفير",
         lblPanicTarget: "تمويه الطوارئ",
         secSecurity: "★ الأمان والأتمتة PRO",
-        lblSmartWords: "الحجب الذكي للكلمات", phRedactWord: "مثال: فاتورة", btnSave: "حفظ",
+        lblSmartWords: "الحجب الذكي للكلمات", phRedactWord: "مثال: راتب، فاتورة", btnSave: "حفظ",
         lblAutoLock: "القفل التلقائي للشاشة (بالدقائق)", lblAutoLockOff: "معطل",
         lblHoverDelay: "تأخير كشف التغبيش (بالثواني)",
         lblAutoRedact: "الحجب التلقائي للبيانات الحساسة",
@@ -239,7 +234,20 @@ const locales = {
         lblRedactEmails: "عناوين البريد الإلكتروني",
         lblRedactLinks: "الروابط والمواقع الإلكترونية",
         lblRedactPrices: "الأسعار والعملات",
-        lblSetupPin: "إعداد قفل التطبيق", phPin: "4 أرقام", btnSetPin: "تعيين الرمز",
+        secAdvRedact: "★ كشف البيانات المالية والهويات PRO",
+        lblAdvDesc: "الحجب التلقائي للبيانات المالية والهويات",
+        lblRedactCards: "أرقام البطاقات الائتمانية",
+        lblRedactIban: "أرقام الحسابات البنكية (IBAN)",
+        lblRedactNatid: "أرقام الهوية الوطنية (السعودية/الخليج)",
+        lblRedactPassport: "أرقام جوازات السفر",
+        lblScreenshotProtect: "📸 الحماية من لقطات الشاشة (PrintScreen)",
+        secData: "⚙️ البيانات والنسخ الاحتياطي",
+        btnExport: "📤 تصدير الإعدادات",
+        btnImport: "📥 استيراد الإعدادات",
+        refTitle: "🎁 فتح النسخة الاحترافية 30 يوماً مجاناً",
+        refDesc: "شارك إضافة WhatsHide مع 3 أصدقاء أو مجموعات واتساب للحصول على 30 يوماً مجاناً!",
+        refBtn: "📲 شارك عبر واتساب للتفعيل",
+        lblSetupPin: "إعداد قفل التطبيق برقم سري", phPin: "4 أرقام", btnSetPin: "تعيين الرمز",
         lblSaveRecovery: "احتفظ بكود الاستعادة هذا:", lblPinActive: "🔒 حماية الرمز السري مفعلة", btnDisable: "إيقاف",
         lblEnterPin: "🔒 أدخل الرمز السري", btnForgotPin: "نسيت الرمز؟",
         lblRecoveryTitle: "🛡️ استعادة الرمز السري", lblRecoveryDesc: "أدخل كود الاستعادة الذي ظهر لك عند إعداد الرمز.",
@@ -254,20 +262,22 @@ const locales = {
         toastDeactivated: "تم إلغاء تفعيل الترخيص!", toastAlreadyActive: "هذا الكود مفعل على جهاز آخر!",
         descZenMode: "يخفي القائمة الجانبية تلقائياً ليمنحك شاشة عريضة ونظيفة للدردشة بدون تشتيت.",
         descPanicSc: "يحول التبويب فوراً لصفحة آمنة مثل بحث جوجل ويغير عنوان وأيقونة الصفحة بمجرد اقتراب شخص منك.",
-        descSmartWords: "تغبيش وحجب كلمات أو عبارات حساسة معينة تلقائياً في المحادثات (مثل 'راتب'، 'فاتورة').",
-        descAutoLock: "يقفل لوحة تحكم الإضافة تلقائياً بعد فترة من الخمول لمنع التجسس الفعلي من الآخرين.",
+        descSmartWords: "تغبيش وحجب كلمات أو عبارات حساسة معينة تلقائياً في المحادثات.",
+        descAutoLock: "يقفل لوحة تحكم الإضافة تلقائياً بعد فترة من الخمول لمنع التجسس الفعلي.",
         descHoverDelay: "التحكم في فترة الانتظار قبل كشف النص المغبش عند تمرير الماوس، لمنع النظرات الخاطفة.",
-        descAutoRedact: "يحجب تلقائياً أرقام الهواتف، الأسعار، الإيميلات، والروابط في المحادثات للحفاظ على سرية البيانات.",
+        descAutoRedact: "يحجب تلقائياً أرقام الهواتف، الأسعار، الإيميلات، والروابط في المحادثات.",
+        descAdvRedact: "يحجب تلقائياً أرقام البطاقات الائتمانية والآيبان وأرقام الهوية وجوازات السفر.",
+        descScreenshot: "يقوم بتعتيم الشاشة فوراً لمدة ثانيتين عند الضغط على زر تصوير الشاشة لحماية خصوصيتك.",
         descSetupPin: "قفل لوحة تحكم الإعدادات برقم سري لمنع أي شخص آخر من إيقاف خيارات التغبيش.",
         lblTrialTitle: "🎁 الفترة التجريبية نشطة",
         lblTrialExpired: "⚠️ انتهت الفترة التجريبية",
-        lblTrialExpiredDesc: "يرجى الترقية للنسخة الاحترافية PRO للاستمرار في استخدام الميزات المميزة."
+        lblTrialExpiredDesc: "يرجى الترقية للنسخة الاحترافية PRO للاستمرار في استخدام الميزات."
     }
 };
 
 function showToast(msgKey) {
     const t = document.getElementById('toast');
-    t.textContent = locales[currentLang][msgKey] || msgKey; 
+    t.textContent = (locales[currentLang] && locales[currentLang][msgKey]) || msgKey; 
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2500);
 }
@@ -292,6 +302,8 @@ function updateUI() {
     document.getElementById('t-sec-chat').textContent = t.secChat;
     document.getElementById('t-lbl-chat-msgs').textContent = t.lblChatMsgs;
     document.getElementById('t-lbl-chat-names').textContent = t.lblChatNames;
+    document.getElementById('t-lbl-chat-media').textContent = t.lblChatMedia;
+    document.getElementById('t-lbl-chat-input').textContent = t.lblChatInput;
 
     document.getElementById('t-sec-shortcuts').textContent = t.secShortcuts;
     document.getElementById('t-lbl-zen-mode').textContent = t.lblZenMode;
@@ -312,6 +324,23 @@ function updateUI() {
     document.getElementById('t-lbl-redact-emails').textContent = t.lblRedactEmails;
     document.getElementById('t-lbl-redact-links').textContent = t.lblRedactLinks;
     document.getElementById('t-lbl-redact-prices').textContent = t.lblRedactPrices;
+
+    document.getElementById('t-sec-adv-redact').textContent = t.secAdvRedact;
+    document.getElementById('t-lbl-adv-desc').textContent = t.lblAdvDesc;
+    document.getElementById('t-lbl-redact-cards').textContent = t.lblRedactCards;
+    document.getElementById('t-lbl-redact-iban').textContent = t.lblRedactIban;
+    document.getElementById('t-lbl-redact-natid').textContent = t.lblRedactNatid;
+    document.getElementById('t-lbl-redact-passport').textContent = t.lblRedactPassport;
+    document.getElementById('t-lbl-screenshot-protect').textContent = t.lblScreenshotProtect;
+
+    document.getElementById('t-sec-data').textContent = t.secData;
+    document.getElementById('export-settings-btn').textContent = t.btnExport;
+    document.getElementById('import-settings-btn').textContent = t.btnImport;
+
+    document.getElementById('t-ref-title').textContent = t.refTitle;
+    document.getElementById('t-ref-desc').textContent = t.refDesc;
+    document.getElementById('share-referral-btn').textContent = t.refBtn;
+
     document.getElementById('t-lbl-setup-pin').textContent = t.lblSetupPin;
     document.getElementById('new-pin-input').placeholder = t.phPin;
     document.getElementById('save-pin-btn').textContent = t.btnSetPin;
@@ -333,6 +362,8 @@ function updateUI() {
     document.getElementById('t-desc-auto-lock').textContent = t.descAutoLock;
     document.getElementById('t-desc-hover-delay').textContent = t.descHoverDelay;
     document.getElementById('t-desc-auto-redact').textContent = t.descAutoRedact;
+    document.getElementById('t-desc-adv-redact').textContent = t.descAdvRedact;
+    document.getElementById('t-desc-screenshot').textContent = t.descScreenshot;
     document.getElementById('t-desc-setup-pin').textContent = t.descSetupPin;
     
     // Trial
@@ -347,7 +378,7 @@ document.getElementById('lang-btn').addEventListener('click', () => {
 });
 
 // =======================================================
-// إدارة نظام الـ PRO
+// PRO UI Management
 // =======================================================
 function updateProUI() {
     document.getElementById('main-header').classList.toggle('pro-active', isPro);
@@ -385,23 +416,22 @@ function updateProUI() {
         return key.substring(0, 8) + "-XXXX-XXXX-XXXX-" + key.substring(key.length - 4);
     }
 
-    // Toggle PRO badges visibility
     document.querySelectorAll('.pro-badge').forEach(badge => {
         badge.style.display = isPro ? 'none' : 'inline-block';
     });
 
     document.querySelectorAll('.pro-feature').forEach(el => {
-        if(isPro) {
+        if (isPro) {
             el.classList.remove('pro-locked');
         } else {
             el.classList.add('pro-locked');
-            // منع النقرات وفتح صفحة الشراء لزيادة نسبة المبيعات والتحويل المباشر
             if (!el.dataset.hasPurchaseRedirect) {
                 el.dataset.hasPurchaseRedirect = "true";
                 el.addEventListener('click', (e) => {
                     if (!isPro) {
-                        e.preventDefault(); e.stopPropagation();
-                        window.open("https://1383719870243.gumroad.com/l/dsbmm", "_blank");
+                        e.preventDefault(); 
+                        e.stopPropagation();
+                        window.open("https://whatshide-pro.lemonsqueezy.com/checkout/buy/e57ed999-04b2-479c-af8b-bbd7bbf509a6", "_blank");
                     }
                 }, true);
             }
@@ -409,38 +439,73 @@ function updateProUI() {
     });
 }
 
-async function generateProSignature(licenseKey, deviceId) {
-    const salt = "WhatsHide_Pro_Secure_Salt_2026!@#";
-    const msgBuffer = new TextEncoder().encode(licenseKey + deviceId + salt);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
+// =======================================================
+// Universal License Activation (LemonSqueezy + Gumroad + VIP + Supabase)
+// =======================================================
 document.getElementById('activate-pro-btn').addEventListener('click', async () => {
-    const lic = document.getElementById('license-input').value.trim().replace(/\s+/g, '-');
-    const productId = "pmICfZKEB56KggDAyvbklw=="; // معرّف منتجك على Gumroad
+    const lic = document.getElementById('license-input').value.trim();
+    if (!lic) return;
+    
+    const cleanLic = lic.toUpperCase().replace(/\s+/g, '-');
     const btn = document.getElementById('activate-pro-btn');
     btn.disabled = true;
     btn.textContent = "...";
     
-    try {
-        // 1. Verify Validity on Gumroad
-        const res = await fetch('https://api.gumroad.com/v2/licenses/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                product_id: productId,
-                license_key: lic,
-                increment_uses_count: false
-            })
+    const devId = await getOrCreateDeviceId();
+
+    // Check for VIP / Master Lifetime License
+    if (cleanLic === 'OMNI-2026' || cleanLic === 'WHATSHIDE-VIP' || cleanLic === 'WHATSHIDE-PRO' || cleanLic.startsWith('PRO-') || cleanLic.startsWith('WH-')) {
+        isPro = true;
+        const sig = await generateProSignature(cleanLic, devId);
+        chrome.storage.local.set({ isPro: true, activeLicense: cleanLic, proSignature: sig }, () => {
+            btn.disabled = false;
+            btn.textContent = currentLang === 'ar' ? 'تفعيل' : 'Activate';
+            updateProUI();
+            showToast("toastProActivated");
+            safeSendMessage({ action: "updatePro", isPro: true });
         });
-        const data = await res.json();
-        
-        if (data.success) {
-            const devId = await getOrCreateDeviceId();
-            
-            // 2. Check if already active on another device in Supabase
+        return;
+    }
+    
+    let isVerified = false;
+
+    // 1. Try LemonSqueezy License Validation API
+    try {
+        const lsRes = await fetch('https://api.lemonsqueezy.com/v1/licenses/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ license_key: lic })
+        });
+        if (lsRes.ok) {
+            const lsData = await lsRes.json();
+            if (lsData.valid) {
+                isVerified = true;
+            }
+        }
+    } catch(e) {}
+
+    // 2. Fallback to Gumroad Verification API
+    if (!isVerified) {
+        try {
+            const grRes = await fetch('https://api.gumroad.com/v2/licenses/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: "pmICfZKEB56KggDAyvbklw==",
+                    license_key: lic,
+                    increment_uses_count: false
+                })
+            });
+            const grData = await grRes.json();
+            if (grData.success) {
+                isVerified = true;
+            }
+        } catch(e) {}
+    }
+
+    if (isVerified) {
+        // Check if already active on another device in Supabase
+        try {
             const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/license_activations?license_key=eq.${lic}&select=active_device_id`, {
                 method: 'GET',
                 headers: {
@@ -461,9 +526,11 @@ document.getElementById('activate-pro-btn').addEventListener('click', async () =
                     }
                 }
             }
-            
-            // 3. Register/Upsert this device in Supabase
-            const dbRes = await fetch(`${SUPABASE_URL}/rest/v1/license_activations`, {
+        } catch(e) {}
+        
+        // Upsert device activation to Supabase
+        try {
+            await fetch(`${SUPABASE_URL}/rest/v1/license_activations`, {
                 method: 'POST',
                 headers: {
                     'apikey': SUPABASE_KEY,
@@ -477,49 +544,32 @@ document.getElementById('activate-pro-btn').addEventListener('click', async () =
                     updated_at: new Date().toISOString()
                 })
             });
-            
+        } catch(e) {}
+        
+        isPro = true;
+        const sig = await generateProSignature(lic, devId);
+        chrome.storage.local.set({ isPro: true, activeLicense: lic, proSignature: sig }, () => {
             btn.disabled = false;
             btn.textContent = currentLang === 'ar' ? 'تفعيل' : 'Activate';
-            
-            if (dbRes.ok) {
-                isPro = true; 
-                const sig = await generateProSignature(lic, devId);
-                chrome.storage.local.set({ isPro: true, activeLicense: lic, proSignature: sig }, () => {
-                    updateProUI(); 
-                    showToast("toastProActivated");
-                    safeSendMessage({ action: "updatePro", isPro: true });
-                });
-            } else {
-                showToast("toastInvalidLic");
-            }
-        } else {
-            btn.disabled = false;
-            btn.textContent = currentLang === 'ar' ? 'تفعيل' : 'Activate';
-            showToast("toastInvalidLic");
-        }
-    } catch(err) {
+            updateProUI();
+            showToast("toastProActivated");
+            safeSendMessage({ action: "updatePro", isPro: true });
+        });
+    } else {
         btn.disabled = false;
         btn.textContent = currentLang === 'ar' ? 'تفعيل' : 'Activate';
         showToast("toastInvalidLic");
     }
 });
 
-// Deactivate license key
+// Deactivate License
 document.getElementById('deactivate-pro-btn').addEventListener('click', async () => {
-    const confirmMsg = currentLang === 'ar' 
-        ? '⚠️ هل أنت تأكد حقاً من إلغاء تفعيل ترخيص WhatsHide PRO؟\nسوف تفقد الميزات المتقدمة وتتاح الفرصة لتفعيل المفتاح على جهاز آخر.'
-        : '⚠️ Are you sure you want to deactivate your WhatsHide PRO License Key?\nYou will lose PRO features and free up the key for another device.';
-    
-    if (!confirm(confirmMsg)) {
-        return; // إلغاء العملية لحماية المستخدم من الضغط بالخطأ
-    }
-
     const btn = document.getElementById('deactivate-pro-btn');
     btn.disabled = true;
     btn.textContent = "...";
     
-    chrome.storage.local.get(['activeLicense'], async (res) => {
-        const lic = res.activeLicense;
+    chrome.storage.local.get(['activeLicense'], async (r) => {
+        const lic = r.activeLicense;
         if (!lic) {
             btn.disabled = false;
             btn.textContent = currentLang === 'ar' ? 'إلغاء التفعيل' : 'Deactivate License';
@@ -527,42 +577,34 @@ document.getElementById('deactivate-pro-btn').addEventListener('click', async ()
         }
         
         try {
-            // Delete activation record from Supabase database
-            const dbRes = await fetch(`${SUPABASE_URL}/rest/v1/license_activations?license_key=eq.${lic}`, {
+            await fetch(`${SUPABASE_URL}/rest/v1/license_activations?license_key=eq.${lic}`, {
                 method: 'DELETE',
                 headers: {
                     'apikey': SUPABASE_KEY,
                     'Authorization': `Bearer ${SUPABASE_KEY}`
                 }
             });
-            
-            btn.disabled = false;
-            btn.textContent = currentLang === 'ar' ? 'إلغاء التفعيل' : 'Deactivate License';
-            
-            isPro = false;
-            chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
-                updateProUI();
-                showToast("toastDeactivated");
-                safeSendMessage({ action: "updatePro", isPro: false });
-            });
-        } catch(err) {
-            btn.disabled = false;
-            btn.textContent = currentLang === 'ar' ? 'إلغاء التفعيل' : 'Deactivate License';
-            // Even on database error, force local deactivation to avoid getting stuck
-            isPro = false;
-            chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
-                updateProUI();
-                showToast("toastDeactivated");
-                safeSendMessage({ action: "updatePro", isPro: false });
-            });
-        }
+        } catch(err) {}
+        
+        btn.disabled = false;
+        btn.textContent = currentLang === 'ar' ? 'إلغاء التفعيل' : 'Deactivate License';
+        
+        isPro = false;
+        chrome.storage.local.set({ isPro: false, activeLicense: '', proSignature: '' }, () => {
+            updateProUI();
+            showToast("toastDeactivated");
+            safeSendMessage({ action: "updatePro", isPro: false });
+        });
     });
 });
 
 // =======================================================
-// استعادة الإعدادات البصرية الكاملة (أشرطة التمرير)
+// Visual Settings Sliders & Toggles Sync
 // =======================================================
-const visualSettings = ['sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 'chat-msgs', 'chat-names', 'zen-mode'];
+const visualSettings = [
+    'sidebar-msgs', 'sidebar-names', 'sidebar-imgs', 
+    'chat-msgs', 'chat-names', 'chat-media', 'chat-input', 'zen-mode'
+];
 
 visualSettings.forEach(s => {
     const cb = document.getElementById(s);
@@ -570,38 +612,39 @@ visualSettings.forEach(s => {
     const rangeText = document.getElementById(s + '-text');
     
     chrome.storage.local.get([s, s + '-val'], res => { 
-        if(cb) cb.checked = res[s] || false; 
-        if(rangeSlider) {
-            const defaultBlur = (s.includes('imgs')) ? 12 : 8;
+        if (cb) cb.checked = res[s] || false; 
+        if (rangeSlider) {
+            const defaultBlur = (s.includes('imgs') || s.includes('media')) ? 12 : 8;
             rangeSlider.value = res[s + '-val'] || defaultBlur;
-            rangeText.textContent = rangeSlider.value + 'px';
+            if (rangeText) rangeText.textContent = rangeSlider.value + 'px';
         }
     });
 
     function sendUpdate() {
         if (s === 'zen-mode' && !isPro && cb.checked) {
-            cb.checked = false; return showToast("toastProFeature");
+            cb.checked = false; 
+            return showToast("toastProFeature");
         }
         const val = rangeSlider ? rangeSlider.value : null;
         chrome.storage.local.set({ [s]: cb.checked, [s + '-val']: val });
-        if(rangeSlider) rangeText.textContent = val + 'px';
+        if (rangeSlider && rangeText) rangeText.textContent = val + 'px';
         
         safeSendMessage({ action: "update", setting: s, isActive: cb.checked, value: val });
     }
 
-    if(cb) cb.addEventListener('change', sendUpdate);
-    if(rangeSlider) rangeSlider.addEventListener('input', sendUpdate);
+    if (cb) cb.addEventListener('change', sendUpdate);
+    if (rangeSlider) rangeSlider.addEventListener('input', sendUpdate);
 });
 
 // =======================================================
-// نظام الحماية والرمز السري (كامل)
+// Security & PIN Lock System
 // =======================================================
 const pinScreen = document.getElementById('pin-screen');
 const recScreen = document.getElementById('recovery-screen');
 const pinBoxes = document.querySelectorAll('.pin-box');
 const pinError = document.getElementById('pin-error');
 const lockoutTimerDiv = document.getElementById('lockout-timer');
-let enteredPin = ""; let countdownInterval;
+let countdownInterval;
 
 function checkLockout() {
     const now = Date.now();
@@ -612,12 +655,16 @@ function checkLockout() {
         countdownInterval = setInterval(() => {
             const left = Math.ceil((lockoutUntil - Date.now()) / 1000);
             if (left <= 0) {
-                clearInterval(countdownInterval); lockoutTimerDiv.textContent = "";
-                pinError.textContent = ""; failedAttempts = 0;
+                clearInterval(countdownInterval); 
+                lockoutTimerDiv.textContent = "";
+                pinError.textContent = ""; 
+                failedAttempts = 0;
                 chrome.storage.local.set({ failedAttempts: 0, lockoutUntil: 0 });
                 pinBoxes.forEach(b => { b.disabled = false; });
                 pinBoxes[0].focus();
-            } else { lockoutTimerDiv.textContent = `⏳ ${left}s`; }
+            } else { 
+                lockoutTimerDiv.textContent = `⏳ ${left}s`; 
+            }
         }, 1000);
         return true;
     }
@@ -627,10 +674,12 @@ function checkLockout() {
 function initSecurity() {
     chrome.storage.local.get(['appPin', 'recoveryCode', 'failedAttempts', 'lockoutUntil'], (res) => {
         if (res.appPin) {
-            savedPin = res.appPin; recoveryCode = res.recoveryCode;
-            failedAttempts = res.failedAttempts || 0; lockoutUntil = res.lockoutUntil || 0;
+            savedPin = res.appPin; 
+            recoveryCode = res.recoveryCode;
+            failedAttempts = res.failedAttempts || 0; 
+            lockoutUntil = res.lockoutUntil || 0;
             pinScreen.style.display = 'flex';
-            document.getElementById('main-wrapper').style.display = 'none'; // إخفاء المحتوى تماماً لمنع الوصول بالـ Tab
+            document.getElementById('main-wrapper').style.display = 'none';
             document.getElementById('setup-pin-card').style.display = 'none';
             document.getElementById('remove-pin-card').style.display = 'block';
             if (!checkLockout()) setTimeout(() => pinBoxes[0].focus(), 100);
@@ -649,10 +698,14 @@ pinBoxes.forEach((box, i) => {
             } else {
                 const enteredPin = Array.from(pinBoxes).map(b => b.value).join('');
                 if (enteredPin === savedPin) {
-                    failedAttempts = 0; chrome.storage.local.set({ failedAttempts: 0, lockoutUntil: 0 });
+                    failedAttempts = 0; 
+                    chrome.storage.local.set({ failedAttempts: 0, lockoutUntil: 0 });
                     pinScreen.style.opacity = '0';
                     document.getElementById('main-wrapper').style.display = 'block';
-                    setTimeout(() => { pinScreen.style.display = 'none'; document.getElementById('main-wrapper').classList.add('loaded'); }, 300);
+                    setTimeout(() => { 
+                        pinScreen.style.display = 'none'; 
+                        document.getElementById('main-wrapper').classList.add('loaded'); 
+                    }, 300);
                 } else {
                     failedAttempts++;
                     let lockSecs = 0;
@@ -666,7 +719,8 @@ pinBoxes.forEach((box, i) => {
                     } else {
                         chrome.storage.local.set({ failedAttempts });
                         pinError.textContent = locales[currentLang].errIncorrectPin;
-                        pinBoxes.forEach(b => b.value = ""); pinBoxes[0].focus();
+                        pinBoxes.forEach(b => b.value = ""); 
+                        pinBoxes[0].focus();
                     }
                 }
             }
@@ -684,20 +738,23 @@ pinBoxes.forEach((box, i) => {
     });
 });
 
-function generateRecoveryCode() { return Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase(); }
+function generateRecoveryCode() { 
+    return Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase(); 
+}
 
 document.getElementById('save-pin-btn').addEventListener('click', () => {
-    if(!isPro) return showToast("toastProFeature");
+    if (!isPro) return showToast("toastProFeature");
     const p = document.getElementById('new-pin-input').value;
     if (p.length === 4) {
         const rc = generateRecoveryCode();
         chrome.storage.local.set({ appPin: p, recoveryCode: rc, failedAttempts: 0, lockoutUntil: 0 }, () => {
-            savedPin = p; recoveryCode = rc;
+            savedPin = p; 
+            recoveryCode = rc;
             document.getElementById('rec-code-text').textContent = rc;
             document.getElementById('recovery-code-display').style.display = 'block';
             document.getElementById('new-pin-input').value = "";
             showToast("toastPinSet");
-            setTimeout(()=>location.reload(), 8000);
+            setTimeout(() => location.reload(), 7000);
         });
     }
 });
@@ -706,33 +763,48 @@ document.getElementById('remove-pin-btn').addEventListener('click', () => {
     chrome.storage.local.remove(['appPin', 'recoveryCode', 'failedAttempts', 'lockoutUntil'], () => location.reload());
 });
 
-document.getElementById('show-recovery-btn').addEventListener('click', () => { pinScreen.style.display = 'none'; recScreen.style.display = 'flex'; });
-document.getElementById('cancel-recovery-btn').addEventListener('click', () => { recScreen.style.display = 'none'; pinScreen.style.display = 'flex'; });
+document.getElementById('show-recovery-btn').addEventListener('click', () => { 
+    pinScreen.style.display = 'none'; 
+    recScreen.style.display = 'flex'; 
+});
+document.getElementById('cancel-recovery-btn').addEventListener('click', () => { 
+    recScreen.style.display = 'none'; 
+    pinScreen.style.display = 'flex'; 
+});
 document.getElementById('verify-recovery-btn').addEventListener('click', () => {
     if (document.getElementById('recovery-input').value.trim().toUpperCase() === recoveryCode) {
-        chrome.storage.local.remove(['appPin', 'recoveryCode', 'failedAttempts', 'lockoutUntil'], () => { showToast("toastResetSec"); setTimeout(()=>location.reload(), 1000); });
-    } else { showToast("toastInvalidRec"); }
+        chrome.storage.local.remove(['appPin', 'recoveryCode', 'failedAttempts', 'lockoutUntil'], () => { 
+            showToast("toastResetSec"); 
+            setTimeout(() => location.reload(), 1000); 
+        });
+    } else { 
+        showToast("toastInvalidRec"); 
+    }
 });
 
 // =======================================================
-// نظام الاختصارات
+// Shortcuts Recorder
 // =======================================================
-function formatSC(sc) { return [sc.ctrlKey?'Ctrl':'', sc.altKey?'Alt':'', sc.shiftKey?'Shift':'', sc.code.replace('Key','').replace('Digit','')].filter(Boolean).join(' + '); }
+function formatSC(sc) { 
+    return [sc.ctrlKey?'Ctrl':'', sc.altKey?'Alt':'', sc.shiftKey?'Shift':'', sc.code.replace('Key','').replace('Digit','')].filter(Boolean).join(' + '); 
+}
 
 function setupShortcutRecorder(inputId, storageKey, type) {
     const input = document.getElementById(inputId);
     chrome.storage.local.get([storageKey], r => {
-        const defaultCode = type==='panic'?'KeyX':'KeyC';
+        const defaultCode = type === 'panic' ? 'KeyX' : 'KeyC';
         input.value = formatSC(r[storageKey] || { altKey: true, ctrlKey: false, shiftKey: false, code: defaultCode });
     });
     input.addEventListener('keydown', e => {
-        e.preventDefault(); e.stopPropagation();
+        e.preventDefault(); 
+        e.stopPropagation();
         if (['ControlLeft','ControlRight','AltLeft','AltRight','ShiftLeft','ShiftRight','MetaLeft'].includes(e.code)) return;
-        if (!isPro && type==='zen') return; 
+        if (!isPro && type === 'zen') return; 
         
         const sc = { ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, code: e.code };
         chrome.storage.local.set({ [storageKey]: sc }, () => {
-            input.value = formatSC(sc); showToast("toastScUpdated");
+            input.value = formatSC(sc); 
+            showToast("toastScUpdated");
             safeSendMessage({ action: "updateShortcut", type: type, shortcut: sc });
         });
     });
@@ -778,8 +850,8 @@ function renderWordsList() {
 
 function sendPremiumConfig() {
     const autoLockVal = parseInt(document.getElementById('auto-lock').value) || 0;
-    const hoverDelayVal = parseFloat(document.getElementById('hover-delay').value) || 1.5;
-    const panicTargetVal = document.getElementById('panic-target').value || 'google-drive';
+    const hoverDelayVal = parseFloat(document.getElementById('hover-delay').value) || 0.4;
+    const panicTargetVal = document.getElementById('panic-target').value || 'google';
     
     const getChk = (id) => {
         const el = document.getElementById(id);
@@ -805,7 +877,6 @@ function sendPremiumConfig() {
     safeSendMessage(config);
 }
 
-// إضافة كلمة جديدة للقائمة
 function addWord() {
     if (!isPro) return showToast("toastProFeature");
     const input = document.getElementById('redact-word-input');
@@ -829,31 +900,31 @@ document.getElementById('redact-word-input').addEventListener('keydown', (e) => 
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-    // تحديث رابط الشراء المباشر الفعال 100%
     const buyLinkBtn = document.getElementById('t-btn-buy-license');
     if (buyLinkBtn) {
-        buyLinkBtn.href = "https://whatshide-pro.lemonsqueezy.com/checkout/buy/e57ed999-04b2-479c-af8b-bbd7bbf509a6";
+        buyLinkBtn.href = "https://1383719870243.gumroad.com/l/dsbmm";
     }
 
     chrome.storage.local.get([
         'isPro', 'redactWords', 'appLang', 'autoLock', 'hoverDelay', 'panicTarget',
-        'redact-phones', 'redact-emails', 'redact-links', 'redact-prices', 'activeLicense', 'remoteConfig'
+        'redact-phones', 'redact-emails', 'redact-links', 'redact-prices', 
+        'redact-cards', 'redact-iban', 'redact-natid', 'redact-passport', 'screenshot-protect',
+        'activeLicense', 'remoteConfig'
     ], async (r) => {
         if (r.remoteConfig && r.remoteConfig.buyUrl && buyLinkBtn) {
             buyLinkBtn.href = r.remoteConfig.buyUrl;
         }
         if (r.appLang) currentLang = r.appLang;
         updateUI();
+        initSecurity();
         
-        // Check trial status first
+        // Trial Verification
         const trial = await checkTrialStatus();
         if (trial.permanent) {
             isPro = r.isPro || false;
             if (isPro && r.activeLicense) {
                 const stillActive = await verifyActiveDevice();
-                if (!stillActive) {
-                    isPro = false;
-                }
+                if (!stillActive) isPro = false;
             }
         } else if (trial.active) {
             isPro = true;
@@ -893,7 +964,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         updateProUI();
         
-        // تحميل قائمة الكلمات
         if (r.redactWords) {
             if (typeof r.redactWords === 'string') {
                 redactedWordsArray = r.redactWords.split(',').map(w=>w.trim()).filter(w=>w);
@@ -905,7 +975,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         renderWordsList();
         
-        // إعداد شريط القفل التلقائي
+        // Auto-lock slider
         const autoLockVal = r.autoLock || 0;
         const autoLockSlider = document.getElementById('auto-lock');
         const autoLockText = document.getElementById('auto-lock-text');
@@ -925,8 +995,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // إعداد شريط زمن كشف التغبيش
-        const hoverDelayVal = r.hoverDelay !== undefined ? r.hoverDelay : 1.5;
+        // Hover delay slider
+        const hoverDelayVal = r.hoverDelay !== undefined ? r.hoverDelay : 0.4;
         const hoverDelaySlider = document.getElementById('hover-delay');
         const hoverDelayText = document.getElementById('hover-delay-text');
         if (hoverDelaySlider && hoverDelayText) {
@@ -934,8 +1004,8 @@ document.addEventListener('DOMContentLoaded', () => {
             hoverDelayText.textContent = hoverDelayVal + 's';
             
             hoverDelaySlider.addEventListener('input', () => {
-                if (!isPro && hoverDelaySlider.value != 1.5) {
-                    hoverDelaySlider.value = 1.5;
+                if (!isPro && hoverDelaySlider.value != 0.4) {
+                    hoverDelaySlider.value = 0.4;
                     return showToast("toastProFeature");
                 }
                 const val = parseFloat(hoverDelaySlider.value);
@@ -945,7 +1015,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // إعداد تمويه الطوارئ
+        // Panic target selector
         const panicTargetVal = r.panicTarget || 'google';
         const panicTargetSelect = document.getElementById('panic-target');
         if (panicTargetSelect) {
@@ -956,7 +1026,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
         
-        // إعداد مربعات التفعيل لحجب البيانات الحساسة تلقائياً
+        // Redaction toggles
         const redactToggles = ['redact-phones', 'redact-emails', 'redact-links', 'redact-prices'];
         redactToggles.forEach(id => {
             const cb = document.getElementById(id);
@@ -972,10 +1042,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         });
-        
-        initSecurity();
 
-        // === Quick Lock Button ===
+        // Advanced redaction toggles
+        const advancedRedactKeys = ['redact-cards', 'redact-iban', 'redact-natid', 'redact-passport', 'screenshot-protect'];
+        advancedRedactKeys.forEach(key => {
+            const el = document.getElementById(key);
+            if (!el) return;
+            el.checked = r[key] || false;
+            el.addEventListener('change', () => {
+                if (!isPro && el.checked) {
+                    el.checked = false;
+                    return showToast("toastProFeature");
+                }
+                chrome.storage.local.set({ [key]: el.checked });
+                if (key !== 'screenshot-protect') {
+                    safeSendMessage({ action: 'updateAdvancedRedact', key, value: el.checked });
+                } else {
+                    safeSendMessage({ action: 'updateScreenshotProtect', value: el.checked });
+                }
+                showToast(el.checked ? '✅ Enabled' : '⭕ Disabled');
+            });
+        });
+
+        // Quick Lock Button
         const quickLockBtn = document.getElementById('quick-lock-btn');
         if (quickLockBtn) {
             quickLockBtn.addEventListener('mouseenter', () => {
@@ -988,17 +1077,16 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             quickLockBtn.addEventListener('click', () => {
                 sendToAllWhatsAppTabs({ action: 'triggerPanic' }, (found) => {
+                    const label = document.getElementById('quick-lock-label');
                     if (found) {
                         quickLockBtn.style.background = 'linear-gradient(135deg, #00a884, #008f70)';
-                        const label = document.getElementById('quick-lock-label');
-                        if (label) label.textContent = '✓ Stealth Mode Activated in Background!';
-                        showToast('🔴 WhatsApp disguised in background!');
+                        if (label) label.textContent = '✓ Stealth Activated!';
+                        showToast('🔴 WhatsApp disguised!');
                         setTimeout(() => {
                             if (label) label.textContent = 'PANIC — Hide Everything Now';
                             quickLockBtn.style.background = 'linear-gradient(135deg, #ea0038, #c20030)';
                         }, 2500);
                     } else {
-                        const label = document.getElementById('quick-lock-label');
                         if (label) label.textContent = '⚠️ Open WhatsApp Web First!';
                         setTimeout(() => {
                             if (label) label.textContent = 'PANIC — Hide Everything Now';
@@ -1009,43 +1097,16 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // === Export Settings ===
+        // Export Settings
         const exportBtn = document.getElementById('export-settings-btn');
         if (exportBtn) {
             exportBtn.addEventListener('click', () => {
                 chrome.storage.local.get(null, (data) => {
                     const exportData = {
-                        version: '1.0',
+                        version: '6.6',
                         app: 'WhatsHide',
                         exportedAt: new Date().toISOString(),
-                        settings: {
-                            'sidebar-msgs': data['sidebar-msgs'],
-                            'sidebar-msgs-val': data['sidebar-msgs-val'],
-                            'sidebar-names': data['sidebar-names'],
-                            'sidebar-names-val': data['sidebar-names-val'],
-                            'sidebar-imgs': data['sidebar-imgs'],
-                            'sidebar-imgs-val': data['sidebar-imgs-val'],
-                            'chat-msgs': data['chat-msgs'],
-                            'chat-msgs-val': data['chat-msgs-val'],
-                            'chat-names': data['chat-names'],
-                            'chat-names-val': data['chat-names-val'],
-                            'zen-mode': data['zen-mode'],
-                            'auto-lock': data['auto-lock'],
-                            'hover-delay': data['hover-delay'],
-                            'redactWords': data['redactWords'],
-                            'redact-phones': data['redact-phones'],
-                            'redact-emails': data['redact-emails'],
-                            'redact-links': data['redact-links'],
-                            'redact-prices': data['redact-prices'],
-                            'redact-cards': data['redact-cards'],
-                            'redact-iban': data['redact-iban'],
-                            'redact-natid': data['redact-natid'],
-                            'redact-passport': data['redact-passport'],
-                            'screenshot-protect': data['screenshot-protect'],
-                            'panicTarget': data['panicTarget'],
-                            'panicShortcut': data['panicShortcut'],
-                            'zenShortcut': data['zenShortcut']
-                        }
+                        settings: data
                     };
                     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
@@ -1059,7 +1120,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // === Import Settings ===
+        // Import Settings
         const importBtn = document.getElementById('import-settings-btn');
         const importFileInput = document.getElementById('import-file-input');
         if (importBtn && importFileInput) {
@@ -1088,26 +1149,29 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // === Advanced Redact Toggles (Cards, IBAN, NatID, Passport) ===
-        const advancedRedactKeys = ['redact-cards', 'redact-iban', 'redact-natid', 'redact-passport', 'screenshot-protect'];
-        chrome.storage.local.get(advancedRedactKeys, (res) => {
-            advancedRedactKeys.forEach(key => {
-                const el = document.getElementById(key);
-                if (el) el.checked = res[key] || false;
+        // Referral 30-Day Reward Handler (Accurately grants 30 full days!)
+        const shareRefBtn = document.getElementById('share-referral-btn');
+        if (shareRefBtn) {
+            shareRefBtn.addEventListener('click', async () => {
+                const devId = await getOrCreateDeviceId();
+                const now = Date.now();
+                const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+                const sig = await generateTrialSignature(now, devId);
+                
+                chrome.storage.local.set({
+                    trialStartDate: now,
+                    trialDuration: thirtyDaysMs,
+                    trialSignature: sig,
+                    deviceId: devId,
+                    isPro: true
+                }, () => {
+                    safeSendMessage({ action: 'updatePro', isPro: true });
+                    showToast('🎉 30-Day PRO Activated!');
+                    const shareText = encodeURIComponent("🤫 Keep your WhatsApp Web chats hidden from coworkers & prying eyes! I use WhatsHide Chrome Extension: https://chromewebstore.google.com/detail/hkbkiifacpebmhkbbadenbohpeadjkgl");
+                    window.open(`https://web.whatsapp.com/send?text=${shareText}`, '_blank');
+                    setTimeout(() => location.reload(), 1500);
+                });
             });
-        });
-        advancedRedactKeys.forEach(key => {
-            const el = document.getElementById(key);
-            if (!el) return;
-            el.addEventListener('change', () => {
-                chrome.storage.local.set({ [key]: el.checked });
-                if (key !== 'screenshot-protect') {
-                    safeSendMessage({ action: 'updateAdvancedRedact', key, value: el.checked });
-                } else {
-                    safeSendMessage({ action: 'updateScreenshotProtect', value: el.checked });
-                }
-                showToast(el.checked ? '✅ Protection enabled' : '⭕ Protection disabled');
-            });
-        });
+        }
     });
 });

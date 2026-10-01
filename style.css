@@ -4,85 +4,285 @@
     --sidebar-imgs-val: 12px;
     --chat-msgs-val: 8px;
     --chat-names-val: 8px;
+    --chat-media-val: 12px;
+    --chat-input-val: 8px;
+    --omni-hover-delay: 0.4s;
 }
 
-/* التغبيش الاحترافي (السينمائي) */
-body.sidebar-msgs #pane-side div[data-testid="cell-frame-secondary"] > div:first-child {
-    filter: blur(var(--sidebar-msgs-val)) !important;
-    transition: filter 0.1s ease-in-out !important;
-}
-body.sidebar-names #pane-side div[data-testid="cell-frame-title"] {
-    filter: blur(var(--sidebar-names-val)) !important;
-    transition: filter 0.1s ease-in-out !important;
-}
-body.sidebar-imgs #pane-side img {
-    filter: blur(var(--sidebar-imgs-val)) !important;
-    transition: filter 0.1s ease-in-out !important;
-}
-body.chat-msgs #main div[data-testid="msg-container"] {
-    filter: blur(var(--chat-msgs-val)) !important;
-    transition: filter 0.1s ease-in-out !important;
-}
-body.chat-names #main header > div:nth-child(2) span,
-body.chat-names #main header span[dir="auto"] {
-    filter: blur(var(--chat-names-val)) !important;
-    transition: filter 0.1s ease-in-out !important;
+/* =========================================================
+   WhatsHide Ultra-Precision Privacy Engine v6.7
+   Zero Lag | Preserves Unread Badges | Protects Contact Names
+   ========================================================= */
+
+/* Explicitly NEVER blur cell-frame-secondary itself */
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] {
+    filter: none !important;
 }
 
-/* تأثير Hover مع تأخير */
-body.sidebar-msgs #pane-side div[data-testid="cell-frame-secondary"] > div:first-child:hover {
-    filter: blur(0px) !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
-}
-body.sidebar-names #pane-side div[data-testid="cell-frame-title"]:hover {
-    filter: blur(0px) !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
-}
-body.sidebar-imgs #pane-side img:hover {
-    filter: blur(0px) !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
-}
-body.chat-msgs #main div[data-testid="msg-container"]:hover {
-    filter: blur(0px) !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
-}
-body.chat-names #main header > div:nth-child(2) span:hover,
-body.chat-names #main header span[dir="auto"]:hover {
-    filter: blur(0px) !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+/* 1. Sidebar Last Messages (تغبيش نص الرسالة فقط بنعومة مع الحفاظ على عداد الرسائل والأيقونات) */
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] > span:first-child:not([data-testid*="unread"]):not([aria-label*="unread"]):not([aria-label*="غير مقروء"]),
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] > div:first-child:not(:has([data-testid*="unread"])):not(:has([aria-label*="unread"])):not(:has([aria-label*="غير مقروء"])),
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] span[dir="ltr"]:not([data-testid*="unread"]),
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] span[dir="rtl"]:not([data-testid*="unread"]),
+:is(html, body).sidebar-msgs #pane-side .omni-blur-sidebar-msg {
+    filter: blur(var(--sidebar-msgs-val, 6px)) !important;
+    user-select: none !important;
+    transition: filter 0.15s ease-in-out !important;
+    will-change: filter;
 }
 
-/* Zen Mode (إخفاء القائمة) */
-body.zen-mode #side { display: none !important; }
-body.zen-mode #main { width: 100% !important; flex: 1 1 auto !important; }
+/* EXEMPTIONS: Unread Counter Badges & Status Icons must ALWAYS remain crisp and clearly readable */
+:is(html, body).sidebar-msgs #pane-side [data-testid*="unread"],
+:is(html, body).sidebar-msgs #pane-side [data-testid*="unread"] *,
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="unread"],
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="unread"] *,
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="غير مقروء"],
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="غير مقروءة"],
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="غير مقروء"] *,
+:is(html, body).sidebar-msgs #pane-side span[aria-label*="غير مقروءة"] *,
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] > div:last-child,
+:is(html, body).sidebar-msgs #pane-side [data-testid="cell-frame-secondary"] > div:last-child *,
+:is(html, body).sidebar-msgs #pane-side [data-testid="pinned2"],
+:is(html, body).sidebar-msgs #pane-side [data-testid="muted"],
+:is(html, body).sidebar-msgs #pane-side [data-testid="status-v3-unread"] {
+    filter: none !important;
+}
 
-/* الحجب الذكي للكلمات - تأثير بلور احترافي بدون وميض */
+/* EXEMPTIONS: Header, Search bar, and Chat Filters are NEVER touched or blurred */
+:is(html, body) #side header,
+:is(html, body) #side [data-testid="chat-filters"],
+:is(html, body) #side div[role="tablist"],
+:is(html, body) #side [data-testid="search"],
+:is(html, body) #side div[data-testid="chat-list-search"] {
+    filter: none !important;
+}
+
+/* 2. Sidebar Contact Names (تغبيش ناعم وطبيعي لأسماء جهات الاتصال بدون قص أو حواف مستطيلة) */
+:is(html, body).sidebar-names #pane-side div[role="row"] [data-testid="cell-frame-title"] > div:first-child span,
+:is(html, body).sidebar-names #pane-side div[role="row"] [data-testid="cell-frame-title"] span[dir="auto"],
+:is(html, body).sidebar-names #pane-side div[role="row"] [data-testid="cell-frame-title"] span[title],
+:is(html, body).sidebar-names #pane-side div[role="listitem"] [data-testid="cell-frame-title"] > div:first-child span,
+:is(html, body).sidebar-names #pane-side div[role="listitem"] [data-testid="cell-frame-title"] span[dir="auto"],
+:is(html, body).sidebar-names #pane-side div[role="listitem"] [data-testid="cell-frame-title"] span[title],
+:is(html, body).sidebar-names #pane-side .omni-blur-sidebar-name {
+    filter: blur(var(--sidebar-names-val, 6px)) !important;
+    user-select: none !important;
+    transition: filter 0.15s ease-in-out !important;
+    will-change: filter;
+}
+
+/* Exempt timestamps from name blur */
+:is(html, body).sidebar-names #pane-side [data-testid="cell-frame-title"] > div:last-child,
+:is(html, body).sidebar-names #pane-side [data-testid="cell-frame-title"] > div:last-child * {
+    filter: none !important;
+}
+
+/* 3. Sidebar Profile Pictures / Avatars (تغبيش دائري ناعم ومثالي للصور الشخصية) */
+:is(html, body).sidebar-imgs #pane-side img,
+:is(html, body).sidebar-imgs #pane-side [data-testid="cell-frame-icon"],
+:is(html, body).sidebar-imgs #pane-side [data-testid="default-user"],
+:is(html, body).sidebar-imgs .omni-blur-sidebar-img {
+    filter: blur(var(--sidebar-imgs-val, 12px)) !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    transition: filter 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    will-change: filter;
+}
+
+/* 4. Active Chat Messages (تغبيش نصوص الدردشة المفتوحة بحواف ناعمة) */
+:is(html, body).chat-msgs #main div[data-testid="msg-container"] .selectable-text,
+:is(html, body).chat-msgs #main div.message-in .selectable-text,
+:is(html, body).chat-msgs #main div.message-out .selectable-text,
+:is(html, body).chat-msgs #main div[role="row"] div.copyable-text,
+:is(html, body).chat-msgs #main div[role="row"] span.selectable-text,
+:is(html, body).chat-msgs #main div[data-id] .copyable-text,
+:is(html, body).chat-msgs #main div[data-id] .selectable-text,
+:is(html, body).chat-msgs #main div[data-testid="quoted-message"],
+:is(html, body).chat-msgs #main .omni-blur-chat-msg {
+    filter: blur(var(--chat-msgs-val, 6px)) !important;
+    transition: filter 0.15s ease-in-out !important;
+    will-change: filter;
+}
+
+/* Exemption: Reactions & Timestamps inside message bubbles should not be distorted */
+:is(html, body).chat-msgs #main [data-testid*="reaction-"],
+:is(html, body).chat-msgs #main [data-testid="msg-meta"],
+:is(html, body).chat-msgs #main div[role="row"] span[dir="auto"]:has(svg) {
+    filter: none !important;
+}
+
+/* 5. Active Chat Header Name & Info (تغبيش اسم وشريط المحادثة المفتوحة بحواف ناعمة) */
+:is(html, body).chat-names #main header span[dir="auto"],
+:is(html, body).chat-names #main header [data-testid="conversation-info-header"] span,
+:is(html, body).chat-names #main header .omni-blur-chat-header {
+    filter: blur(var(--chat-names-val, 6px)) !important;
+    transition: filter 0.15s ease-in-out !important;
+    will-change: filter;
+}
+
+/* Exemption: Chat header action buttons (search, call, menu) must NOT be blurred */
+:is(html, body).chat-names #main header div[role="button"],
+:is(html, body).chat-names #main header [data-testid="menu"],
+:is(html, body).chat-names #main header [data-testid="search"] {
+    filter: none !important;
+}
+
+/* 6. Active Chat Media & Audios (تغبيش الوسائط والصوتيات بالدردشة) */
+:is(html, body).chat-media #main img:not([alt*="Emoji"]):not([class*="emoji"]),
+:is(html, body).chat-media #main video,
+:is(html, body).chat-media #main div[data-testid="audio-player"],
+:is(html, body).chat-media #main div[data-testid="image-thumb"],
+:is(html, body).chat-media #main div[data-testid="video-thumb"],
+:is(html, body).chat-media #main div[data-testid="sticker"],
+:is(html, body).chat-media .omni-blur-chat-media {
+    filter: blur(var(--chat-media-val, 12px)) !important;
+    border-radius: 12px !important;
+    transition: filter 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    will-change: filter;
+}
+
+/* 7. Active Chat Input / Compose Box (تغبيش حقل كتابة الرسائل) */
+:is(html, body).chat-input #main footer div[contenteditable="true"],
+:is(html, body).chat-input #main footer div[data-testid="conversation-compose-box-input"],
+:is(html, body).chat-input #main footer [role="textbox"],
+:is(html, body).chat-input .omni-blur-chat-input {
+    filter: blur(var(--chat-input-val, 8px)) !important;
+    border-radius: 10px !important;
+    transition: filter 0.15s ease-in-out !important;
+    will-change: filter;
+}
+
+/* =========================================================
+   Intuitive Row-Level & Item Hover Reveal (كشف فوري وذكي بالماوس)
+   ========================================================= */
+
+/* Unblur sidebar message when hovering anywhere on that conversation row */
+:is(html, body).sidebar-msgs #pane-side div[role="row"]:hover [data-testid="cell-frame-secondary"] > span,
+:is(html, body).sidebar-msgs #pane-side div[role="row"]:hover [data-testid="cell-frame-secondary"] > div:first-child,
+:is(html, body).sidebar-msgs #pane-side div[role="row"]:hover .omni-blur-sidebar-msg,
+:is(html, body).sidebar-msgs #pane-side div[role="listitem"]:hover [data-testid="cell-frame-secondary"] > span,
+:is(html, body).sidebar-msgs #pane-side div[role="listitem"]:hover [data-testid="cell-frame-secondary"] > div:first-child,
+:is(html, body).sidebar-msgs #pane-side div[role="listitem"]:hover .omni-blur-sidebar-msg,
+:is(html, body).sidebar-msgs .omni-blur-sidebar-msg:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur sidebar contact name when hovering on that row (if names blur is active) */
+:is(html, body).sidebar-names #pane-side div[role="row"]:hover [data-testid="cell-frame-title"] span,
+:is(html, body).sidebar-names #pane-side div[role="listitem"]:hover [data-testid="cell-frame-title"] span,
+:is(html, body).sidebar-names #pane-side div[role="row"]:hover .omni-blur-sidebar-name,
+:is(html, body).sidebar-names #pane-side div[role="listitem"]:hover .omni-blur-sidebar-name,
+:is(html, body).sidebar-names #pane-side [data-testid="cell-frame-title"]:hover span,
+:is(html, body).sidebar-names #pane-side span[title]:hover,
+:is(html, body).sidebar-names #pane-side .omni-blur-sidebar-name:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur avatar on hover */
+:is(html, body).sidebar-imgs #pane-side div[role="row"]:hover img,
+:is(html, body).sidebar-imgs #pane-side div[role="row"]:hover [data-testid="cell-frame-icon"],
+:is(html, body).sidebar-imgs #pane-side img:hover,
+:is(html, body).sidebar-imgs #pane-side [data-testid="cell-frame-icon"]:hover,
+:is(html, body).sidebar-imgs .omni-blur-sidebar-img:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur chat message on hover */
+:is(html, body).chat-msgs #main div[role="row"]:hover div[data-testid="msg-container"],
+:is(html, body).chat-msgs #main div[role="row"]:hover div.copyable-text,
+:is(html, body).chat-msgs #main div[role="row"]:hover span.selectable-text,
+:is(html, body).chat-msgs #main div[data-testid="msg-container"]:hover,
+:is(html, body).chat-msgs #main div.message-in:hover,
+:is(html, body).chat-msgs #main div.message-out:hover,
+:is(html, body).chat-msgs #main div[data-id]:hover,
+:is(html, body).chat-msgs .omni-blur-chat-msg:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur chat header on hover */
+:is(html, body).chat-names #main header:hover span[dir="auto"],
+:is(html, body).chat-names #main header:hover [data-testid="conversation-info-header"],
+:is(html, body).chat-names #main header:hover div[role="button"],
+:is(html, body).chat-names .omni-blur-chat-header:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur media on hover */
+:is(html, body).chat-media #main img:hover,
+:is(html, body).chat-media #main video:hover,
+:is(html, body).chat-media #main div[data-testid="audio-player"]:hover,
+:is(html, body).chat-media #main div[data-testid="image-thumb"]:hover,
+:is(html, body).chat-media #main div[data-testid="video-thumb"]:hover,
+:is(html, body).chat-media #main div[data-testid="sticker"]:hover,
+:is(html, body).chat-media .omni-blur-chat-media:hover {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* Unblur input box when typing/focused or hovered */
+:is(html, body).chat-input #main footer div[contenteditable="true"]:focus,
+:is(html, body).chat-input #main footer [role="textbox"]:focus,
+:is(html, body).chat-input #main footer div[contenteditable="true"]:hover,
+:is(html, body).chat-input #main footer [role="textbox"]:hover,
+:is(html, body).chat-input .omni-blur-chat-input:hover,
+:is(html, body).chat-input .omni-blur-chat-input:focus-within {
+    filter: blur(0px) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
+}
+
+/* =========================================================
+   Zen Mode (إخفاء شريط المحادثات بالكامل)
+   ========================================================= */
+:is(html, body).zen-mode #side,
+:is(html, body).zen-mode #pane-side,
+:is(html, body).zen-mode div[data-testid="chat-list"],
+:is(html, body).zen-mode div[aria-label*="Chat list"],
+:is(html, body).zen-mode div[aria-label*="قائمة الدردشات"],
+:is(html, body).zen-mode .sidebar { 
+    display: none !important; 
+}
+:is(html, body).zen-mode #main,
+:is(html, body).zen-mode .chat-main { 
+    width: 100% !important; 
+    flex: 1 1 auto !important; 
+    max-width: 100% !important;
+}
+
+/* =========================================================
+   Smart Words & Regex Redaction
+   ========================================================= */
 omni-redact {
     display: inline;
-    filter: blur(6px) !important;
-    border-radius: 3px;
+    filter: blur(5px) !important;
     user-select: none;
     cursor: default;
-    /* لا transition هنا — نريد أن يظهر البلور فوراً بدون animation عند الإضافة */
     will-change: filter;
+    transition: filter 0.2s ease !important;
 }
 omni-redact:hover {
     filter: blur(0px) !important;
-    transition: filter 0.35s ease !important;
-    transition-delay: var(--omni-hover-delay, 1.5s) !important;
+    transition-delay: var(--omni-hover-delay, 0.4s) !important;
 }
 
-/* عند تغيير الـ pattern: إخفاء مؤقت لمنع الـ flash أثناء إعادة البناء */
-body.omni-restoring omni-redact {
+:is(html, body).omni-restoring omni-redact {
     visibility: hidden !important;
 }
 
-/* حماية لقطات الشاشة الاحترافية (عند فقدان الفوكس أو محاولة التصوير) */
-body.screenshot-blur-active #app,
-body.screenshot-blur-active #side,
-body.screenshot-blur-active #main {
+/* =========================================================
+   PrintScreen Protection
+   ========================================================= */
+:is(html, body).screenshot-blur-active #app,
+:is(html, body).screenshot-blur-active #side,
+:is(html, body).screenshot-blur-active #main,
+:is(html, body).screenshot-blur-active .sidebar,
+:is(html, body).screenshot-blur-active .chat-main {
     filter: blur(50px) grayscale(100%) !important;
     opacity: 0.05 !important;
     transition: none !important;
     pointer-events: none !important;
-}
+}
